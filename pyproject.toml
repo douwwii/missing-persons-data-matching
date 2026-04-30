@@ -1,0 +1,22 @@
+[project]
+name = "identity-db-cleaning"
+version = "0.1.0"
+description = "Etape 1: nettoyage, normalisation et enrichissement de dossiers de personnes disparues."
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "python-dateutil>=2.8",
+    "rapidfuzz>=3.0",
+    "streamlit>=1.30",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+

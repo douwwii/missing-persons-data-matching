@@ -1,0 +1,42 @@
+# Donnees locales importees/exportees
+*.csv
+*.xls
+*.xlsx
+
+# Dependances installees localement sans environnement virtuel
+python_packages/
+python_package/
+vendor/
+
+# Environnements locaux eventuels
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Tests et caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Streamlit: garder .streamlit/config.toml versionne, ignorer les secrets locaux
+.streamlit/secrets.toml
+
+# Builds et metadata packaging
+build/
+dist/
+*.egg-info/
+
+# Fichiers temporaires et logs
+*.log
+*.tmp
+*.temp
+~$*
+.DS_Store
+Thumbs.db
