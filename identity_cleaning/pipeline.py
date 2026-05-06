@@ -6,7 +6,7 @@ from typing import Callable, Mapping
 import pandas as pd
 
 from identity_cleaning.cities import CityReference, CityResolution, resolve_city
-from identity_cleaning.mapping import ColumnMapping, read_mapped_value, validate_required_fields
+from identity_cleaning.mapping import ColumnMapping, read_mapped_value, read_mapped_values, validate_required_fields
 from identity_cleaning.normalization import name_tokens, normalize_text, parse_disappearance_date, tokens_as_string
 
 
@@ -55,6 +55,11 @@ def _format_raw(value: object) -> str:
     return str(value).strip()
 
 
+def _format_joined(values: list[object]) -> str:
+    parts = [_format_raw(value) for value in values]
+    return " ".join(part for part in parts if part)
+
+
 def _apply_human_decision(
     decision: HumanDecision,
     resolution: CityResolution,
@@ -90,8 +95,8 @@ def build_clean_database(
         case_id = _format_raw(read_mapped_value(source_row, person_mapping, "case_id"))
         if progress_callback and (position == 1 or position == total or position % 25 == 0):
             progress_callback(position, total, case_id)
-        first_name_raw = _format_raw(read_mapped_value(source_row, person_mapping, "first_name"))
-        last_name_raw = _format_raw(read_mapped_value(source_row, person_mapping, "last_name"))
+        first_name_raw = _format_joined(read_mapped_values(source_row, person_mapping, "first_name"))
+        last_name_raw = _format_joined(read_mapped_values(source_row, person_mapping, "last_name"))
         full_name_raw = _format_raw(read_mapped_value(source_row, person_mapping, "full_name"))
         if not full_name_raw:
             full_name_raw = build_full_name(first_name_raw, last_name_raw)

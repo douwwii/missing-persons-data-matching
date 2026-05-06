@@ -56,6 +56,21 @@ def test_manual_mapping_rejects_duplicate_fields():
         mapping.require_unique_fields()
 
 
+def test_manual_mapping_accepts_repeated_first_and_last_names():
+    mapping = ColumnMapping(
+        {
+            "first_1": "first_name__1",
+            "first_2": "first_name__2",
+            "last_1": "last_name__1",
+            "last_2": "last_name__2",
+        }
+    )
+
+    mapping.require_unique_fields()
+    assert mapping.sources_for("first_name") == ["first_1", "first_2"]
+    assert mapping.sources_for("last_name") == ["last_1", "last_2"]
+
+
 def test_exact_city_department_match():
     result = resolve_city("Saint Etienne", "Loire", sample_refs())
     assert result.status == "exact_city_department_match"
@@ -149,3 +164,39 @@ def test_human_correction_and_final_export_columns():
     csv_text = clean.to_csv(index=False)
     assert "case_id" in csv_text
     assert "full_name_normalized" in clean.columns
+
+
+def test_repeated_first_and_last_names_are_joined_in_clean_database():
+    refs = sample_refs()
+    persons = pd.DataFrame(
+        [
+            {
+                "id": "1",
+                "first_1": "Maria",
+                "first_2": "Camila",
+                "last_1": "Garcia",
+                "last_2": "Lopez",
+                "city": "Bogota",
+                "dept": "",
+                "date": "2005-02-18",
+            }
+        ]
+    )
+    mapping = ColumnMapping(
+        {
+            "id": "case_id",
+            "first_1": "first_name__1",
+            "first_2": "first_name__2",
+            "last_1": "last_name__1",
+            "last_2": "last_name__2",
+            "city": "disappearance_city",
+            "dept": "disappearance_department",
+            "date": "disappearance_date",
+        }
+    )
+
+    clean = build_clean_database(persons, mapping, refs)
+
+    assert clean.loc[0, "first_name_raw"] == "Maria Camila"
+    assert clean.loc[0, "last_name_raw"] == "Garcia Lopez"
+    assert clean.loc[0, "full_name_raw"] == "Maria Camila Garcia Lopez"
