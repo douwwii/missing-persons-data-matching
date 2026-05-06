@@ -25,6 +25,7 @@ def run_matching(
     parallel_config: ParallelConfig | None = None,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> MatchingRunResult:
+    """Run matching with the configured analysis mode."""
     if analysis_config.analysis_mode == "custom_placeholder":
         return MatchingRunResult(
             status="not_implemented",
@@ -32,7 +33,7 @@ def run_matching(
             investigation_mode=analysis_config.investigation_mode,
             total_records=len(records),
             theoretical_pairs_count=_theoretical_for_config(records, analysis_config),
-            explanation="Le mode personnalise sera ajoute dans une prochaine version.",
+            explanation="Custom mode will be added in a future version.",
         )
     if analysis_config.analysis_mode == "standard_blocking":
         return run_standard_blocking_matching(records, analysis_config, blocking_config, parallel_config, progress_callback)
@@ -45,12 +46,13 @@ def run_exhaustive_matching(
     parallel_config: ParallelConfig | None = None,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> MatchingRunResult:
+    """Score every pair in scope and return sorted retained results."""
     started_at = perf_counter()
     if progress_callback is not None:
-        progress_callback("Generation des paires", 0, 1)
+        progress_callback("Pair generation", 0, 1)
     pairs = _pairs_for_config(records, analysis_config)
     if progress_callback is not None:
-        progress_callback("Generation des paires", 1, 1)
+        progress_callback("Pair generation", 1, 1)
     threshold = float(analysis_config.filter_parameters.get("min_score_threshold", 0.0))
     max_results = int(analysis_config.filter_parameters.get("max_results", 50))
     parallel_config = _effective_parallel_config(parallel_config)
@@ -81,8 +83,8 @@ def run_exhaustive_matching(
         elapsed_time=elapsed,
         **stats,
         explanation=(
-            "Mode exhaustif / validation : toutes les paires du perimetre selectionne ont ete comparees. "
-            "Ce mode peut etre lent sur une grosse base."
+            "Exhaustive / validation mode: every pair in the selected scope was compared. "
+            "This mode can be slow on a large dataset."
         ),
     )
 
@@ -94,9 +96,10 @@ def run_standard_blocking_matching(
     parallel_config: ParallelConfig | None = None,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> MatchingRunResult:
+    """Generate standard blocking candidates, score them, and return sorted results."""
     started_at = perf_counter()
     if progress_callback is not None:
-        progress_callback("Preparation du blocking", 0, 1)
+        progress_callback("Preparing blocking", 0, 1)
     blocking_config = blocking_config or BlockingConfig()
     if analysis_config.investigation_mode == "single_case":
         blocking_config = BlockingConfig(
@@ -107,9 +110,9 @@ def run_standard_blocking_matching(
         )
     blocking_result = generate_standard_blocking_pairs(records, blocking_config)
     if progress_callback is not None:
-        progress_callback("Preparation du blocking", 1, 1)
+        progress_callback("Preparing blocking", 1, 1)
         progress_callback(
-            "Paires candidates trouvees",
+            "Candidate pairs found",
             blocking_result.candidate_pairs_count,
             max(blocking_result.theoretical_pairs_count, 1),
         )
@@ -162,7 +165,7 @@ def run_standard_blocking_matching(
         reduction_percentage=blocking_result.reduction_percentage,
         elapsed_time=elapsed,
         **stats,
-        explanation="Mode blocking standard : seules les paires candidates retenues par R1, R2 ou R4 ont ete scorees.",
+        explanation="Standard blocking mode: only candidate pairs retained by R1, R2, or R3 were scored.",
     )
 
 
@@ -170,12 +173,14 @@ def _pairs_for_config(
     records: list[MissingPersonRecord],
     analysis_config: AnalysisConfig,
 ) -> list[tuple[MissingPersonRecord, MissingPersonRecord]]:
+    """Generate pairs according to global or single-case investigation mode."""
     if analysis_config.investigation_mode == "single_case":
         return generate_single_case_pairs(records, analysis_config.selected_case_id or "")
     return generate_all_pairs(records)
 
 
 def _theoretical_for_config(records: list[MissingPersonRecord], analysis_config: AnalysisConfig) -> int:
+    """Return the theoretical pair count for the selected investigation mode."""
     selected_case_id = analysis_config.selected_case_id if analysis_config.investigation_mode == "single_case" else None
     return theoretical_pair_count(len(records), selected_case_id)
 
@@ -186,6 +191,7 @@ def _pair_result(
     similarity: CombinedSimilarityResult,
     candidate: CandidatePair | None = None,
 ) -> PairMatchingResult:
+    """Convert detailed similarity output into a pair matching result."""
     return PairMatchingResult(
         id_A=record_a.case_id,
         id_B=record_b.case_id,
@@ -215,6 +221,7 @@ def _score_pairs(
     use_cache: bool,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> list[PairMatchingResult]:
+    """Score pairs using cache-aware sequential or parallel execution."""
     records_by_id = {record.case_id: record for record in records}
     normalized_pair_count = len(pairs)
     workers = 1 if parallel_config.debug_mode else parallel_config.num_workers
@@ -248,6 +255,7 @@ def _parallel_stats(
     parallel_config: ParallelConfig,
     scoring_elapsed: float,
 ) -> dict[str, object]:
+    """Build performance and cache statistics for a matching run."""
     cached_pairs = sum(1 for result in pair_results if result.from_cache)
     computed_pairs = len(pair_results) - cached_pairs
     parallel_enabled = any(result.pair_parallel_enabled for result in pair_results)
@@ -266,6 +274,7 @@ def _parallel_stats(
 
 
 def _effective_parallel_config(parallel_config: ParallelConfig | None) -> ParallelConfig:
+    """Normalize optional parallel configuration into safe runtime values."""
     if parallel_config is None:
         return ParallelConfig()
     if parallel_config.debug_mode:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.cache import sqlite_cache
 from src.matching import pairwise_cache
 from src.matching.pair_generation import generate_all_pairs, generate_single_case_pairs
 from src.matching.parallel import parallel_compute_pair_scores, should_use_parallelism
@@ -95,13 +96,23 @@ def test_single_case_parallel_matches_sequential() -> None:
 
 
 def test_cache_skips_existing_pairs_and_adds_new_pairs(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(pairwise_cache, "CACHE_DIR", tmp_path)
-    monkeypatch.setattr(pairwise_cache, "CACHE_FILE", tmp_path / "pairwise_scores.csv")
+    monkeypatch.setattr(sqlite_cache, "CACHE_DIR", tmp_path)
     data = records()[:3]
     records_by_id = {item.case_id: item for item in data}
     analysis_config = config()
     cached_similarity = compute_combined_similarity(records_by_id["A"], records_by_id["B"], analysis_config)
-    pairwise_cache.store_pair_result("A", "B", analysis_config, cached_similarity)
+    pairwise_cache.insert_component_rows(
+        [
+            pairwise_cache.component_row_for_records(
+                "A",
+                "B",
+                records_by_id["A"],
+                records_by_id["B"],
+                analysis_config,
+                cached_similarity,
+            )
+        ]
+    )
 
     results = parallel_compute_pair_scores(
         [("A", "B"), ("A", "C")],
@@ -115,6 +126,66 @@ def test_cache_skips_existing_pairs_and_adds_new_pairs(tmp_path, monkeypatch) ->
     assert sum(result.from_cache for result in results) == 1
     cache = pairwise_cache.load_cache()
     assert len(cache) == 2
+
+
+def test_component_cache_reuses_stable_scores_and_recomputes_threshold_scores(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(sqlite_cache, "CACHE_DIR", tmp_path)
+    record_a = record("A", "juan pablo")
+    record_b = record("B", "juan pablo")
+    record_b.latitude = 0.1
+    record_b.longitude = 0.0
+    record_b.disappearance_date_parsed = "2024-01-21"
+    records_by_id = {"A": record_a, "B": record_b}
+    first_config = AnalysisConfig(
+        enabled_filters={"name": True, "phonetic": False, "geographic": True, "temporal": True},
+        filter_parameters={
+            "geographic_distance_min_km": 0.0,
+            "geographic_distance_max_km": 50.0,
+            "temporal_max_days": 40,
+            "max_results": 50,
+            "min_score_threshold": 0.0,
+        },
+    )
+    second_config = AnalysisConfig(
+        enabled_filters={"name": True, "phonetic": False, "geographic": True, "temporal": True},
+        filter_parameters={
+            "geographic_distance_min_km": 0.0,
+            "geographic_distance_max_km": 10.0,
+            "temporal_max_days": 20,
+            "max_results": 50,
+            "min_score_threshold": 0.0,
+        },
+    )
+
+    first = parallel_compute_pair_scores(
+        [("A", "B")],
+        records_by_id,
+        first_config,
+        num_workers=1,
+        chunk_size=1,
+        use_cache=True,
+    )[0]
+
+    def fail_if_recomputed(*args, **kwargs):
+        raise AssertionError("Stable pair components should have been reused from cache")
+
+    monkeypatch.setattr("src.matching.parallel.compute_combined_similarity", fail_if_recomputed)
+    second = parallel_compute_pair_scores(
+        [("A", "B")],
+        records_by_id,
+        second_config,
+        num_workers=1,
+        chunk_size=1,
+        use_cache=True,
+    )[0]
+
+    assert second.from_cache
+    assert second.score_name == pytest.approx(first.score_name)
+    assert second.distance_km == pytest.approx(first.distance_km)
+    assert second.distance_days == first.distance_days
+    assert second.score_geographic != pytest.approx(first.score_geographic)
+    assert second.score_temporal != pytest.approx(first.score_temporal)
+    assert second.score_final != pytest.approx(first.score_final)
 
 
 def test_num_workers_one_uses_sequential_path() -> None:

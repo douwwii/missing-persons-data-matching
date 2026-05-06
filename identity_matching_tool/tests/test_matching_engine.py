@@ -68,7 +68,7 @@ def test_custom_placeholder_returns_not_implemented() -> None:
     result = run_matching(records(), config("custom_placeholder"))
 
     assert result.status == "not_implemented"
-    assert "prochaine version" in result.explanation
+    assert "future version" in result.explanation
 
 
 def test_single_case_exhaustive_compares_n_minus_one_pairs() -> None:
@@ -103,4 +103,3 @@ def test_max_results_limits_results() -> None:
     result = run_matching(records(), config("exhaustive", max_results=2))
 
     assert len(result.results) <= 2
-

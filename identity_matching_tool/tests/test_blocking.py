@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from src.cache import sqlite_cache
 from src.matching.blocking import (
     are_counters_compatible,
     build_blocking_signature,
@@ -111,16 +112,16 @@ def test_r2_true_with_compatible_onsets_and_near_date() -> None:
     assert "R2" in result.candidate_pairs[0].matched_rules
 
 
-def test_r4_true_with_close_space_and_time() -> None:
+def test_r3_true_with_close_space_and_time() -> None:
     result = generate_standard_blocking_pairs(
         [record("A", "abc", "2024-01-01", 48.8566, 2.3522), record("B", "xyz", "2024-01-05", 48.857, 2.353)]
     )
 
     assert result.candidate_pairs_count == 1
-    assert "R4" in result.candidate_pairs[0].matched_rules
+    assert "R3" in result.candidate_pairs[0].matched_rules
 
 
-def test_r4_false_when_distance_too_large() -> None:
+def test_r3_false_when_distance_too_large() -> None:
     result = generate_standard_blocking_pairs(
         [
             record("A", "abc", "2024-01-01", 48.8566, 2.3522),
@@ -137,7 +138,7 @@ def test_blocking_keeps_pair_if_any_rule_matches_and_reports_rules() -> None:
     )
 
     assert result.candidate_pairs_count == 1
-    assert set(result.candidate_pairs[0].matched_rules) >= {"R1", "R2", "R4"}
+    assert set(result.candidate_pairs[0].matched_rules) >= {"R1", "R2", "R3"}
 
 
 def test_reduction_percentage() -> None:
@@ -204,7 +205,7 @@ def test_blocking_index_is_exported_to_disk(tmp_path) -> None:
     assert (export_dir / "bucket_summary.csv").exists()
     assert (export_dir / "r1_initials_buckets.csv").exists()
     assert (export_dir / "r2_phonetic_onset_buckets.csv").exists()
-    assert (export_dir / "r4_geo_time_buckets.csv").exists()
+    assert (export_dir / "r3_geo_time_buckets.csv").exists()
     assert (export_dir / "signatures.csv").exists()
 
 
@@ -228,6 +229,22 @@ def test_blocking_result_exposes_bucket_cache_directory() -> None:
     assert result.blocking_index_cache_dir is not None
 
 
+def test_blocking_buckets_are_loaded_from_sqlite_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(sqlite_cache, "CACHE_DIR", tmp_path)
+    clear_blocking_index_cache()
+    data = [record("A", "juan pablo"), record("B", "juan pablo", "2024-01-02")]
+    config = BlockingConfig()
+
+    first = get_or_build_blocking_index(data, config)
+    clear_blocking_index_cache()
+    second = get_or_build_blocking_index(data, config)
+
+    assert first.cache_key == second.cache_key
+    assert first.initials_index == second.initials_index
+    assert first.phonetic_onset_index == second.phonetic_onset_index
+    assert first.geo_time_index == second.geo_time_index
+
+
 def _naive_blocking_pairs(records: list[MissingPersonRecord], config: BlockingConfig) -> set[tuple[str, str]]:
     signatures = {item.case_id: build_blocking_signature(item) for item in records}
     pairs: set[tuple[str, str]] = set()
@@ -247,12 +264,12 @@ def _naive_blocking_pairs(records: list[MissingPersonRecord], config: BlockingCo
                 and diff <= config.date_threshold_name_rules
                 and are_counters_compatible(sig_a.phonetic_onset_bag, sig_b.phonetic_onset_bag)
             )
-            r4 = (
+            r3 = (
                 distance is not None
                 and diff is not None
                 and distance <= config.geo_threshold_km
                 and diff <= config.date_threshold_geo_rule
             )
-            if r1 or r2 or r4:
+            if r1 or r2 or r3:
                 pairs.add(tuple(sorted([record_a.case_id, record_b.case_id])))
     return pairs

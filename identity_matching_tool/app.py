@@ -10,16 +10,22 @@ from src.ui.upload_section import render_upload_section
 
 
 def main() -> None:
+    """Run the Streamlit application workflow from upload to analysis configuration."""
     st.set_page_config(page_title="Identity Matching Tool", layout="wide")
 
-    st.title("Recherche de correspondances potentielles")
+    st.title("Potential Match Search")
     st.write(
-        "Cet outil local aide un enqueteur a preparer une analyse de correspondances "
-        "potentielles entre dossiers de personnes disparues. Il ne prend pas la decision "
-        "a la place de l'enqueteur : les futurs scores seront des aides a l'analyse, pas des preuves."
+        "This local tool helps an investigator prepare an analysis of potential matches "
+        "between missing person case files. It does not make decisions on behalf of the "
+        "investigator: scores are analytical aids, not evidence."
     )
 
-    df = render_upload_section()
+    has_analysis_results = "analysis_results" in st.session_state
+    if has_analysis_results:
+        with st.expander("Step 1 - Loaded file", expanded=False):
+            df = render_upload_section()
+    else:
+        df = render_upload_section()
     if df is None:
         return
 
@@ -32,17 +38,18 @@ def main() -> None:
         validation = st.session_state["dataset_validation"]
         records = st.session_state["missing_person_records"]
     else:
-        validation_progress = st.progress(0, text="Validation du schema")
-        validation = validate_clean_dataset(df)
-        validation_progress.progress(50, text="Creation des dossiers internes")
-        records = dataframe_to_records(df) if validation.is_valid else []
-        validation_progress.progress(100, text="Preparation terminee")
-        validation_progress.empty()
+        with st.spinner("Checking the dataset and preparing case records..."):
+            validation = validate_clean_dataset(df)
+            records = dataframe_to_records(df) if validation.is_valid else []
         st.session_state["validated_file_signature"] = file_signature
         st.session_state["dataset_validation"] = validation
         st.session_state["missing_person_records"] = records
 
-    render_dataset_summary(validation)
+    if has_analysis_results:
+        with st.expander("Dataset summary", expanded=False):
+            render_dataset_summary(validation)
+    else:
+        render_dataset_summary(validation)
     if not validation.is_valid:
         return
 

@@ -1,21 +1,21 @@
 # Identity Matching Tool
 
-Application Streamlit locale pour analyser des correspondances potentielles entre dossiers de personnes disparues.
+Local Streamlit application for analyzing potential matches between missing person case records.
 
-## Fonctionnement
+## Workflow
 
-L'application demande un CSV propre, verifie son schema, affiche un resume qualite, puis transforme les lignes valides en dossiers internes. L'utilisateur choisit ensuite un mode d'analyse :
+The application loads a clean CSV, validates its schema, displays a quality summary, then converts valid rows into internal case records. The user can then choose an analysis mode:
 
-- `Single case matching` : recherche les dossiers les plus proches d'un dossier cible ;
-- `Global matching` : compare les dossiers entre eux pour faire ressortir les meilleures correspondances.
+- `Single case matching`: finds the closest case records for one target case;
+- `Global matching`: compares case records against each other to surface the strongest potential matches.
 
-Le moteur peut combiner plusieurs familles de scores : nom, phonetique, localisation et temporalite. Le blocking limite le nombre de paires a scorer, puis les resultats sont tries par score. Les caches locaux accelerent les relances, notamment pour les scores de paires, les index de blocking et les conversions phonetiques IPA.
+The engine can combine several score families: name, phonetic, location, and time. Blocking limits the number of pairs to score, then results are sorted by score. Local SQLite caches speed up reruns, especially for pair scores, blocking buckets, and IPA phonetic conversions.
 
-Ces scores sont des aides a l'analyse, pas des preuves.
+Scores are investigative aids, not evidence.
 
-## Format du CSV
+## Expected CSV Format
 
-Colonnes obligatoires :
+Required columns:
 
 - `case_id`
 - `full_name_raw`
@@ -26,7 +26,7 @@ Colonnes obligatoires :
 - `longitude`
 - `disappearance_date_parsed`
 
-Colonnes recommandees :
+Recommended columns:
 
 - `first_name_raw`
 - `first_name_normalized`
@@ -40,28 +40,28 @@ Colonnes recommandees :
 - `city_resolution_score`
 - `city_resolution_explanation`
 
-Une colonne obligatoire manquante bloque l'analyse. Une colonne recommandee manquante affiche seulement un avertissement.
+A missing required column blocks the analysis. A missing recommended column only displays a warning.
 
-## Installation sans venv
+## Install Without A Virtualenv
 
-Depuis ce dossier :
+From this directory:
 
 ```powershell
 python -m pip install --target python_packages -r requirements.txt
 ```
 
-Les paquets sont installes dans `python_packages/`. Ce dossier n'est pas versionne et peut etre regenere sur une autre machine.
+Packages are installed in `python_packages/`. This directory is not versioned and can be regenerated on another machine.
 
-## Lancement
+## Run
 
-Depuis ce dossier :
+From this directory:
 
 ```powershell
 $env:PYTHONPATH = "$PWD\python_packages"
 python -m streamlit run app.py
 ```
 
-Un fichier d'exemple est disponible dans `data/sample_clean_missing_persons.csv`.
+A sample file is available at `data/sample_clean_missing_persons.csv`.
 
 ## Tests
 
@@ -70,12 +70,20 @@ $env:PYTHONPATH = "$PWD\python_packages"
 python -m pytest
 ```
 
-## Fichiers generes
+## Cache Strategy
 
-L'application peut creer des fichiers dans `cache/` :
+The application uses `cache/identity_matching_cache.sqlite` as the operational cache.
 
-- `pairwise_scores.csv` : cache des scores de paires ;
-- `phonetic_ipa_cache.csv` : cache des conversions phonetiques ;
-- `blocking_indexes/` : exports de diagnostic des buckets de blocking.
+It contains three cache families:
 
-Ces fichiers, les `__pycache__`, `.pytest_cache` et `python_packages/` sont ignores par Git car ils sont regenerables.
+- IPA cache: one reordered IPA value per case record, language, normalized name hash, and phonetic algorithm version.
+- Blocking bucket cache: for a dataset and blocking configuration, stores only buckets such as `R1`, `R2`, and `R3` bucket keys mapped to case IDs. Candidate pairs are regenerated from buckets at analysis time.
+- Selective pairwise component cache: stores reusable pair components only when at least two criteria have a score strictly above `0.5`. Stored components include name scores, phonetic scores, raw GPS distance, and raw date gap. Final scores are rebuilt from these components with the current filter parameters, so changing a geographic or temporal threshold does not force stable components to be recomputed.
+
+Older final-score pair caches are no longer used. The selective pairwise component cache is the source of truth for pair reuse; `strong_criteria_count` records how many dimensions passed the `0.5` cache threshold.
+
+When only one scoring filter is enabled, the engine also computes lightweight location and time components, when data is available, only to decide whether the pair satisfies the selective cache policy. These supplemental scores do not change the final score unless their filters are enabled.
+
+Diagnostic blocking bucket exports may also be written under `cache/blocking_indexes/` so large buckets can be inspected manually.
+
+Generated cache files, `__pycache__`, `.pytest_cache`, and `python_packages/` are ignored by Git because they are regenerable.

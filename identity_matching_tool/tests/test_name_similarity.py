@@ -62,7 +62,7 @@ def test_reordered_full_name_detects_order_difference() -> None:
     assert result.reordered_full_name_score > 0.99
     assert result.token_alignment_score > 0.99
     assert result.order_mismatch_suspected is True
-    assert "ordre different" in result.explanation
+    assert "different order" in result.explanation
 
 
 def test_extra_tokens_keep_high_but_not_perfect_alignment() -> None:

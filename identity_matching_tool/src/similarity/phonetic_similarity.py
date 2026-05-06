@@ -6,13 +6,10 @@ import hashlib
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-import pandas as pd
-
+from src.cache import sqlite_cache
 from src.models import MissingPersonRecord, PhoneticSimilarityResult
 from src.preprocessing.safe_parsing import none_if_missing
 
-PHONETIC_CACHE_DIR = Path("cache")
-PHONETIC_CACHE_FILE = PHONETIC_CACHE_DIR / "phonetic_ipa_cache.csv"
 _PANPHON_DISTANCE: Any | None = None
 _IPA_CACHE_FIELD = "_phonetic_ipa_cache"
 _IPA_CACHE_VERSION = "reordered_ipa_tokens_v1"
@@ -24,12 +21,13 @@ def compute_phonetic_similarity(
     record_b: MissingPersonRecord,
     lang: str = "spa-Latn",
 ) -> PhoneticSimilarityResult:
+    """Compute direct PanPhon similarity on reordered IPA tokens for two names."""
     name_a = _clean_present_value(record_a.full_name_normalized)
     name_b = _clean_present_value(record_b.full_name_normalized)
     if not name_a or not name_b:
         return PhoneticSimilarityResult(
             score_final=None,
-            explanation="Similarite phonetique non calculable : nom complet normalise manquant.",
+            explanation="Phonetic similarity cannot be computed: normalized full name is missing.",
             status="missing_name",
         )
 
@@ -74,9 +72,9 @@ def compute_phonetic_similarity(
         ipa_a=ipa_a,
         ipa_b=ipa_b,
         explanation=(
-            "Comparaison phonetique sur les tokens du nom convertis en IPA puis tries par ordre IPA, "
-            f"distance {distance:.3f}, score brut {raw_score:.3f}, score calibre puissance "
-            f"{PHONETIC_SCORE_POWER:.1f}. L'enqueteur doit verifier si ce reordonnancement est pertinent."
+            "Phonetic comparison on name tokens converted to IPA and sorted by IPA order, "
+            f"distance {distance:.3f}, raw score {raw_score:.3f}, calibrated score power "
+            f"{PHONETIC_SCORE_POWER:.1f}. The investigator should verify whether this reordering is relevant."
         ),
         status="ok",
     )
@@ -99,7 +97,7 @@ def precompute_ipa_for_records(
             result = {
                 "status": "missing_name",
                 "ipa": None,
-                "explanation": "Similarite phonetique non calculable : nom complet normalise manquant.",
+                "explanation": "Phonetic similarity cannot be computed: normalized full name is missing.",
             }
             _store_record_ipa(record, lang, result)
             stats["missing"] += 1
@@ -110,7 +108,7 @@ def precompute_ipa_for_records(
                 result = {
                     "status": str(cached.get("status") or "unavailable"),
                     "ipa": _clean_present_value(cached.get("ipa")),
-                    "explanation": str(cached.get("explanation") or "IPA recupere depuis le cache."),
+                    "explanation": str(cached.get("explanation") or "IPA retrieved from cache."),
                 }
                 _store_record_ipa(record, lang, result)
                 stats["cached"] += 1
@@ -129,27 +127,28 @@ def precompute_ipa_for_records(
                     result = {
                         "status": "ok",
                         "ipa": ipa,
-                        "explanation": "IPA pre-calcule depuis les tokens du nom tries par ordre IPA.",
+                        "explanation": "IPA precomputed from name tokens sorted by IPA order.",
                     }
                     stats["computed"] += 1
                 except Exception as exc:
                     result = {
                         "status": "unavailable",
                         "ipa": None,
-                        "explanation": f"IPA non calculable : erreur Epitran ({exc}).",
+                        "explanation": f"IPA cannot be computed: Epitran error ({exc}).",
                     }
                     stats["unavailable"] += 1
                 _store_record_ipa(record, lang, result)
                 rows_to_store.append(_ipa_cache_row(record.case_id, name, lang, result))
 
         if progress_callback is not None:
-            progress_callback("Pre-calcul IPA", index, len(records))
+            progress_callback("IPA precomputation", index, len(records))
 
     _store_ipa_cache_rows(rows_to_store)
     return stats
 
 
 def _compute_ipa(name: str, lang: str) -> dict[str, Any]:
+    """Transliterate one normalized full name into reordered IPA tokens."""
     transliterator_result = _build_transliterator(lang)
     if transliterator_result["status"] != "ok":
         return transliterator_result
@@ -157,24 +156,25 @@ def _compute_ipa(name: str, lang: str) -> dict[str, Any]:
         return {
             "status": "ok",
             "ipa": _reordered_ipa_for_name(name, transliterator_result["transliterator"]),
-            "explanation": "IPA calcule depuis les tokens du nom tries par ordre IPA.",
+            "explanation": "IPA computed from name tokens sorted by IPA order.",
         }
     except Exception as exc:
         return {
             "status": "unavailable",
             "ipa": None,
-            "explanation": f"Similarite phonetique non calculable : erreur Epitran ({exc}).",
+            "explanation": f"Phonetic similarity cannot be computed: Epitran error ({exc}).",
         }
 
 
 def _build_transliterator(lang: str) -> dict[str, Any]:
+    """Create an Epitran transliterator and return a structured availability status."""
     try:
         import epitran
     except ImportError:
         return {
             "status": "unavailable",
             "ipa": None,
-            "explanation": "Similarite phonetique indisponible : Epitran n'est pas installe.",
+            "explanation": "Phonetic similarity is unavailable: Epitran is not installed.",
         }
 
     try:
@@ -185,20 +185,21 @@ def _build_transliterator(lang: str) -> dict[str, Any]:
             "status": "unavailable",
             "ipa": None,
             "explanation": (
-                "Similarite phonetique non calculable : erreur d'encodage lors du chargement "
-                f"des ressources Epitran/PanPhon ({exc})."
+                "Phonetic similarity cannot be computed: encoding error while loading "
+                f"Epitran/PanPhon resources ({exc})."
             ),
         }
     except Exception:
         return {
             "status": "invalid_language",
             "ipa": None,
-            "explanation": f"Similarite phonetique non calculable : langue non supportee ou invalide ({lang}).",
+            "explanation": f"Phonetic similarity cannot be computed: unsupported or invalid language ({lang}).",
         }
     return {"status": "ok", "transliterator": transliterator, "explanation": ""}
 
 
 def _compute_panphon_distance(ipa_a: str, ipa_b: str) -> dict[str, Any]:
+    """Compute PanPhon feature edit distance between two IPA strings."""
     global _PANPHON_DISTANCE
     try:
         import panphon.distance
@@ -206,7 +207,7 @@ def _compute_panphon_distance(ipa_a: str, ipa_b: str) -> dict[str, Any]:
         return {
             "status": "unavailable",
             "distance": None,
-            "explanation": "Similarite phonetique indisponible : PanPhon n'est pas installe.",
+            "explanation": "Phonetic similarity is unavailable: PanPhon is not installed.",
         }
 
     try:
@@ -219,20 +220,21 @@ def _compute_panphon_distance(ipa_a: str, ipa_b: str) -> dict[str, Any]:
             "status": "unavailable",
             "distance": None,
             "explanation": (
-                "Similarite phonetique non calculable : erreur d'encodage lors du chargement "
-                f"des ressources PanPhon ({exc})."
+                "Phonetic similarity cannot be computed: encoding error while loading "
+                f"PanPhon resources ({exc})."
             ),
         }
     except Exception as exc:
         return {
             "status": "unavailable",
             "distance": None,
-            "explanation": f"Similarite phonetique non calculable : erreur PanPhon ({exc}).",
+            "explanation": f"Phonetic similarity cannot be computed: PanPhon error ({exc}).",
         }
     return {"status": "ok", "distance": distance, "explanation": ""}
 
 
 def _cached_ipa(record: MissingPersonRecord, lang: str) -> str | None:
+    """Return a precomputed IPA value stored on the record when available."""
     cache = record.raw_data.get(_IPA_CACHE_FIELD)
     if not isinstance(cache, dict):
         return None
@@ -243,6 +245,7 @@ def _cached_ipa(record: MissingPersonRecord, lang: str) -> str | None:
 
 
 def _store_record_ipa(record: MissingPersonRecord, lang: str, result: dict[str, Any]) -> None:
+    """Store an IPA computation result on a record for reuse during the current run."""
     cache = record.raw_data.setdefault(_IPA_CACHE_FIELD, {})
     if isinstance(cache, dict):
         cache[lang] = {
@@ -253,34 +256,33 @@ def _store_record_ipa(record: MissingPersonRecord, lang: str, result: dict[str, 
 
 
 def _load_ipa_cache_lookup() -> dict[str, dict[str, Any]]:
-    if not PHONETIC_CACHE_FILE.exists():
-        return {}
-    try:
-        cache = pd.read_csv(PHONETIC_CACHE_FILE, dtype=str, low_memory=False)
-    except (pd.errors.EmptyDataError, pd.errors.ParserError, OSError):
-        return {}
-    if cache.empty or "cache_key" not in cache.columns:
-        return {}
-    cache = cache.drop_duplicates(subset=["cache_key"], keep="last")
-    return {str(row["cache_key"]): row.to_dict() for _, row in cache.iterrows()}
+    """Load all persisted IPA cache rows keyed by cache key."""
+    _ensure_ipa_table()
+    with sqlite_cache.connect() as connection:
+        rows = connection.execute("SELECT * FROM ipa_cache").fetchall()
+    return {str(row["cache_key"]): dict(row) for row in rows}
 
 
 def _store_ipa_cache_rows(rows: list[dict[str, Any]]) -> None:
+    """Upsert IPA cache rows into SQLite in one batch."""
     if not rows:
         return
-    PHONETIC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    existing = pd.DataFrame()
-    if PHONETIC_CACHE_FILE.exists():
-        try:
-            existing = pd.read_csv(PHONETIC_CACHE_FILE, dtype=str, low_memory=False)
-        except (pd.errors.EmptyDataError, pd.errors.ParserError, OSError):
-            existing = pd.DataFrame()
-    updated = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
-    updated = updated.drop_duplicates(subset=["cache_key"], keep="last")
-    updated.to_csv(PHONETIC_CACHE_FILE, index=False)
+    _ensure_ipa_table()
+    columns = ["case_id", "lang", "name_hash", "cache_key", "ipa", "status", "explanation", "computed_at"]
+    placeholders = ", ".join("?" for _ in columns)
+    updates = ", ".join(f"{column}=excluded.{column}" for column in columns if column != "cache_key")
+    sql = (
+        f"INSERT INTO ipa_cache ({', '.join(columns)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(cache_key) DO UPDATE SET {updates}"
+    )
+    values = [tuple(row.get(column) for column in columns) for row in rows]
+    with sqlite_cache.connect() as connection:
+        connection.executemany(sql, values)
+        connection.commit()
 
 
 def _ipa_cache_row(case_id: str, name: str, lang: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Build the SQLite row payload for one IPA cache entry."""
     return {
         "case_id": case_id,
         "lang": lang,
@@ -294,14 +296,38 @@ def _ipa_cache_row(case_id: str, name: str, lang: str, result: dict[str, Any]) -
 
 
 def _make_ipa_cache_key(case_id: str, name: str, lang: str) -> str:
+    """Build a versioned IPA cache key from case ID, language, and name hash."""
     return f"{_IPA_CACHE_VERSION}::{lang}::{case_id}::{_hash_text(name)}"
 
 
 def _hash_text(value: str) -> str:
+    """Hash text with SHA-256 for stable cache keys."""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _ensure_ipa_table() -> None:
+    """Create the SQLite IPA cache table and indexes if needed."""
+    with sqlite_cache.connect() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ipa_cache (
+                case_id TEXT,
+                lang TEXT,
+                name_hash TEXT,
+                cache_key TEXT PRIMARY KEY,
+                ipa TEXT,
+                status TEXT,
+                explanation TEXT,
+                computed_at TEXT
+            )
+            """
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_ipa_case_id ON ipa_cache(case_id)")
+        connection.commit()
+
+
 def _reordered_ipa_for_name(name: str, transliterator: Any) -> str:
+    """Transliterate each token and return IPA tokens sorted in IPA order."""
     token_ipas = []
     for token in name.split():
         ipa = _clean_present_value(transliterator.transliterate(token))
@@ -325,11 +351,13 @@ def _panphon_utf8_csv_reads() -> Iterator[None]:
     original_path_open = Path.open
 
     def read_csv_with_utf8(*args, **kwargs):
+        """Wrap pandas.read_csv to default PanPhon resource reads to UTF-8."""
         if "encoding" not in kwargs:
             kwargs["encoding"] = "utf-8"
         return original_read_csv(*args, **kwargs)
 
     def path_open_with_utf8(self, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+        """Wrap Path.open to default PanPhon CSV resource reads to UTF-8."""
         if (
             "b" not in mode
             and encoding is None
@@ -349,6 +377,7 @@ def _panphon_utf8_csv_reads() -> Iterator[None]:
 
 
 def _clean_present_value(value: object) -> str | None:
+    """Convert a present value to stripped text and keep missing values as None."""
     value = none_if_missing(value)
     if value is None:
         return None
@@ -357,4 +386,5 @@ def _clean_present_value(value: object) -> str | None:
 
 
 def _clamp(value: float) -> float:
+    """Constrain a numeric score to the inclusive 0..1 range."""
     return max(0.0, min(1.0, float(value)))

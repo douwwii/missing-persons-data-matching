@@ -19,28 +19,30 @@ class CleanFileLoadingError(ValueError):
 
 
 def load_clean_csv(uploaded_file_or_path: Any) -> pd.DataFrame:
+    """Load a clean CSV file into a DataFrame with user-readable errors."""
     try:
         if isinstance(uploaded_file_or_path, (str, Path)):
             return pd.read_csv(uploaded_file_or_path)
         return pd.read_csv(uploaded_file_or_path)
     except UnicodeDecodeError as exc:
         raise CleanFileLoadingError(
-            "Le fichier CSV ne peut pas etre lu avec l'encodage attendu. "
-            "Verifiez que le fichier exporte par l'etape 1 est bien un CSV lisible."
+            "The CSV file cannot be read with the expected encoding. "
+            "Check that the file exported by step 1 is a readable CSV."
         ) from exc
     except pd.errors.EmptyDataError as exc:
-        raise CleanFileLoadingError("Le fichier CSV est vide.") from exc
+        raise CleanFileLoadingError("The CSV file is empty.") from exc
     except pd.errors.ParserError as exc:
         raise CleanFileLoadingError(
-            "Le fichier CSV semble mal forme. Verifiez le separateur, les guillemets et l'export de l'etape 1."
+            "The CSV file appears to be malformed. Check the separator, quotes, and step 1 export."
         ) from exc
     except OSError as exc:
-        raise CleanFileLoadingError(f"Le fichier CSV est introuvable ou inaccessible : {exc}") from exc
+        raise CleanFileLoadingError(f"The CSV file cannot be found or accessed: {exc}") from exc
     except Exception as exc:
-        raise CleanFileLoadingError(f"Impossible de charger le fichier CSV : {exc}") from exc
+        raise CleanFileLoadingError(f"Unable to load the CSV file: {exc}") from exc
 
 
 def dataframe_to_records(df: pd.DataFrame) -> list[MissingPersonRecord]:
+    """Convert validated DataFrame rows into internal missing person records."""
     records: list[MissingPersonRecord] = []
     for _, row in df.iterrows():
         raw_data = row.where(pd.notna(row), None).to_dict()
@@ -66,8 +68,8 @@ def dataframe_to_records(df: pd.DataFrame) -> list[MissingPersonRecord]:
 
 
 def _optional_str(value: Any) -> str | None:
+    """Return a stripped string value or None for missing values."""
     value = none_if_missing(value)
     if value is None:
         return None
     return str(value)
-

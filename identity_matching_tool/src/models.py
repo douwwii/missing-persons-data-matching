@@ -182,7 +182,7 @@ class BlockingResult:
     reduction_percentage: float = 0.0
     r1_count: int = 0
     r2_count: int = 0
-    r4_count: int = 0
+    r3_count: int = 0
     elapsed_time: float = 0.0
     blocking_index_cache_dir: str | None = None
     explanation: str = ""

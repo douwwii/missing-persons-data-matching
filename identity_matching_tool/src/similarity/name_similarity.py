@@ -10,6 +10,7 @@ NAME_SCORE_POWER = 2.0
 
 
 def compute_name_similarity(record_a: MissingPersonRecord, record_b: MissingPersonRecord) -> NameSimilarityResult:
+    """Compute interpretable written-name similarity from already-normalized fields."""
     full_name_a = _clean_present_value(record_a.full_name_normalized)
     full_name_b = _clean_present_value(record_b.full_name_normalized)
     tokens_a = _record_tokens(record_a)
@@ -36,7 +37,7 @@ def compute_name_similarity(record_a: MissingPersonRecord, record_b: MissingPers
             order_mismatch_suspected=False,
             best_method=None,
             matched_tokens=[],
-            explanation="Similarite de nom non calculable : nom normalise et tokens absents.",
+            explanation="Name similarity cannot be computed: normalized name and tokens are missing.",
             status="missing_name",
         )
 
@@ -62,6 +63,7 @@ def compute_name_similarity(record_a: MissingPersonRecord, record_b: MissingPers
 
 
 def jaro_winkler_similarity(value_a: str, value_b: str) -> float:
+    """Compute a Jaro-Winkler similarity score between two strings."""
     if value_a == value_b:
         return 1.0
     if not value_a or not value_b:
@@ -79,10 +81,12 @@ def jaro_winkler_similarity(value_a: str, value_b: str) -> float:
 
 
 def calibrated_name_similarity(value_a: str, value_b: str) -> float:
+    """Apply the name-score calibration power to Jaro-Winkler output."""
     return jaro_winkler_similarity(value_a, value_b) ** NAME_SCORE_POWER
 
 
 def _jaro_similarity(value_a: str, value_b: str) -> float:
+    """Compute the base Jaro similarity before the Winkler prefix boost."""
     len_a = len(value_a)
     len_b = len(value_b)
     if len_a == 0 or len_b == 0:
@@ -126,6 +130,7 @@ def _jaro_similarity(value_a: str, value_b: str) -> float:
 
 
 def _structured_score(record_a: MissingPersonRecord, record_b: MissingPersonRecord) -> float | None:
+    """Score first-name to first-name and last-name to last-name when both exist."""
     first_a = _clean_present_value(record_a.first_name_normalized)
     first_b = _clean_present_value(record_b.first_name_normalized)
     last_a = _clean_present_value(record_a.last_name_normalized)
@@ -136,12 +141,14 @@ def _structured_score(record_a: MissingPersonRecord, record_b: MissingPersonReco
 
 
 def _score_if_available(value_a: str | None, value_b: str | None) -> float | None:
+    """Score two strings only when both values are present."""
     if not value_a or not value_b:
         return None
     return calibrated_name_similarity(value_a, value_b)
 
 
 def _reordered_score(tokens_a: list[str], tokens_b: list[str]) -> float | None:
+    """Score full names after sorting their tokens alphabetically."""
     if not tokens_a or not tokens_b:
         return None
     reordered_a = " ".join(sorted(tokens_a))
@@ -150,6 +157,7 @@ def _reordered_score(tokens_a: list[str], tokens_b: list[str]) -> float | None:
 
 
 def _token_alignment_score(tokens_a: list[str], tokens_b: list[str]) -> tuple[float | None, list[dict[str, float | str]]]:
+    """Greedily align closest tokens and penalize unmatched extra tokens."""
     if not tokens_a or not tokens_b:
         return None, []
 
@@ -189,6 +197,7 @@ def _weighted_name_scores(
     reordered_full_name_score: float | None,
     token_alignment_score: float | None,
 ) -> list[tuple[float, float, str]]:
+    """Return available name subscores with their configured contribution weights."""
     weighted_scores: list[tuple[float, float, str]] = []
     if direct_structured_score is not None:
         weighted_scores.append((direct_structured_score, PRIMARY_NAME_WEIGHT, "direct_structured"))
@@ -202,6 +211,7 @@ def _weighted_name_scores(
 
 
 def _record_tokens(record: MissingPersonRecord) -> list[str]:
+    """Return normalized name tokens, falling back to full_name_normalized splitting."""
     tokens = parse_name_tokens(record.name_tokens)
     if tokens:
         return tokens
@@ -212,6 +222,7 @@ def _record_tokens(record: MissingPersonRecord) -> list[str]:
 
 
 def _clean_present_value(value: object) -> str | None:
+    """Convert a present value to stripped text and keep missing values as None."""
     value = none_if_missing(value)
     if value is None:
         return None
@@ -220,6 +231,7 @@ def _clean_present_value(value: object) -> str | None:
 
 
 def _order_mismatch_suspected(direct_score: float | None, reordered_score: float | None) -> bool:
+    """Detect names that score much better after token reordering."""
     if direct_score is None or reordered_score is None:
         return False
     return direct_score < 0.88 and reordered_score >= 0.92 and reordered_score - direct_score >= 0.08
@@ -231,23 +243,26 @@ def _build_explanation(
     order_mismatch_suspected: bool,
     token_alignment_score: float | None,
 ) -> str:
-    components = ", ".join(f"{label}={score:.3f} poids={weight:.2f}" for score, weight, label in weighted_scores)
-    parts = [f"Score de nom final {score_final:.3f}, obtenu par moyenne ponderee ({components})."]
+    """Build a plain-English explanation for the written-name score."""
+    components = ", ".join(f"{label}={score:.3f} weight={weight:.2f}" for score, weight, label in weighted_scores)
+    parts = [f"Final name score {score_final:.3f}, computed as a weighted average ({components})."]
     if order_mismatch_suspected:
         parts.append(
-            "Le score direct est plus faible, mais le score apres reorganisation est eleve : "
-            "les elements du nom pourraient etre inverses ou dans un ordre different."
+            "The direct score is lower, but the reordered score is high: "
+            "name elements may be inverted or in a different order."
         )
     if token_alignment_score is not None and token_alignment_score >= 0.80:
-        parts.append("L'alignement des tokens indique que plusieurs elements principaux du nom correspondent.")
+        parts.append("Token alignment indicates that several main name elements match.")
     return " ".join(parts)
 
 
 def _clamp_optional(value: float | None) -> float | None:
+    """Clamp a score when present and preserve None when absent."""
     if value is None:
         return None
     return _clamp(value)
 
 
 def _clamp(value: float) -> float:
+    """Constrain a numeric score to the inclusive 0..1 range."""
     return max(0.0, min(1.0, float(value)))

@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 from time import perf_counter
 
+from src.cache import sqlite_cache
 from src.models import BlockingConfig, BlockingIndex, BlockingResult, BlockingSignature, CandidatePair, MissingPersonRecord
 from src.preprocessing.safe_parsing import none_if_missing, parse_name_tokens, parse_optional_date, parse_optional_float
 from src.similarity.geo_similarity import haversine_distance_km
@@ -24,6 +25,7 @@ _BLOCKING_INDEX_CACHE: dict[str, BlockingIndex] = {}
 
 
 def build_blocking_signature(record: MissingPersonRecord) -> BlockingSignature:
+    """Build the lightweight per-record data used by standard blocking rules."""
     tokens = _blocking_tokens(record)
     initials = Counter(token[0].upper() for token in tokens if token)
     onsets = Counter(phonetic_onset(token) for token in tokens if phonetic_onset(token))
@@ -45,6 +47,7 @@ def build_blocking_signature(record: MissingPersonRecord) -> BlockingSignature:
 
 
 def _blocking_tokens(record: MissingPersonRecord) -> list[str]:
+    """Return blocking tokens from full_name_normalized, falling back to name_tokens."""
     full_name_tokens = [
         token.strip()
         for token in str(record.full_name_normalized or "").split()
@@ -59,6 +62,7 @@ def generate_standard_blocking_pairs(
     records: list[MissingPersonRecord],
     blocking_config: BlockingConfig | None = None,
 ) -> BlockingResult:
+    """Generate candidate pairs kept by standard blocking rules R1, R2, or R3."""
     started_at = perf_counter()
     blocking_config = blocking_config or BlockingConfig()
     blocking_index = get_or_build_blocking_index(records, blocking_config)
@@ -74,7 +78,7 @@ def generate_standard_blocking_pairs(
     candidate_pairs: list[CandidatePair] = []
     r1_count = 0
     r2_count = 0
-    r4_count = 0
+    r3_count = 0
 
     for id_a, id_b in pairs:
         sig_a = signatures[id_a]
@@ -89,9 +93,9 @@ def generate_standard_blocking_pairs(
         if _rule_r2(sig_a, sig_b, diff_days, blocking_config):
             matched_rules.append("R2")
             r2_count += 1
-        if _rule_r4(distance_km, diff_days, blocking_config):
-            matched_rules.append("R4")
-            r4_count += 1
+        if _rule_r3(distance_km, diff_days, blocking_config):
+            matched_rules.append("R3")
+            r3_count += 1
 
         if not matched_rules:
             continue
@@ -109,12 +113,12 @@ def generate_standard_blocking_pairs(
         reduction_percentage=reduction,
         r1_count=r1_count,
         r2_count=r2_count,
-        r4_count=r4_count,
+        r3_count=r3_count,
         elapsed_time=elapsed,
         blocking_index_cache_dir=blocking_index.export_dir,
         explanation=(
-            "Blocking standard indexe applique : R1 initiales/date, R2 debuts phonetiques simples/date, "
-            "R4 proximite spatio-temporelle. Les buckets proposent les paires, puis les regles sont reverifiees."
+            "Indexed standard blocking applied: R1 initials/date, R2 simple phonetic onsets/date, "
+            "R3 strong spatio-temporal proximity. Buckets propose pairs, then rules are checked exactly."
         ),
     )
 
@@ -123,11 +127,20 @@ def get_or_build_blocking_index(
     records: list[MissingPersonRecord],
     blocking_config: BlockingConfig,
 ) -> BlockingIndex:
+    """Load a blocking bucket index from memory or SQLite, or build it if absent."""
     cache_key = make_blocking_index_cache_key(records, blocking_config)
     cached = _BLOCKING_INDEX_CACHE.get(cache_key)
     if cached is not None:
         return cached
+    signatures = {record.case_id: build_blocking_signature(record) for record in records}
+    cached_index = _load_blocking_buckets_from_sqlite(cache_key, signatures)
+    if cached_index is not None:
+        export_blocking_index_to_disk(cached_index, blocking_config)
+        _BLOCKING_INDEX_CACHE.clear()
+        _BLOCKING_INDEX_CACHE[cache_key] = cached_index
+        return cached_index
     index = build_standard_blocking_index(records, blocking_config, cache_key=cache_key)
+    _store_blocking_buckets_in_sqlite(index)
     export_blocking_index_to_disk(index, blocking_config)
     _BLOCKING_INDEX_CACHE.clear()
     _BLOCKING_INDEX_CACHE[cache_key] = index
@@ -139,6 +152,7 @@ def build_standard_blocking_index(
     blocking_config: BlockingConfig,
     cache_key: str | None = None,
 ) -> BlockingIndex:
+    """Build bucket indexes for initials, simple phonetic onsets, and geo-time cells."""
     signatures = {record.case_id: build_blocking_signature(record) for record in records}
     index = BlockingIndex(cache_key=cache_key or make_blocking_index_cache_key(records, blocking_config), signatures=signatures)
 
@@ -161,6 +175,7 @@ def build_standard_blocking_index(
 
 
 def make_blocking_index_cache_key(records: list[MissingPersonRecord], blocking_config: BlockingConfig) -> str:
+    """Create a stable hash for the records and blocking thresholds."""
     payload = {
         "records": [
             (
@@ -180,7 +195,12 @@ def make_blocking_index_cache_key(records: list[MissingPersonRecord], blocking_c
 
 
 def clear_blocking_index_cache() -> None:
+    """Clear in-memory and SQLite blocking bucket caches."""
     _BLOCKING_INDEX_CACHE.clear()
+    _ensure_blocking_bucket_table()
+    with sqlite_cache.connect() as connection:
+        connection.execute("DELETE FROM blocking_buckets")
+        connection.commit()
 
 
 def export_blocking_index_to_disk(
@@ -188,6 +208,7 @@ def export_blocking_index_to_disk(
     blocking_config: BlockingConfig,
     base_dir: Path | None = None,
 ) -> Path:
+    """Write human-readable diagnostic CSV files for the current blocking buckets."""
     export_dir = (base_dir or BLOCKING_INDEX_CACHE_DIR) / blocking_index.cache_key[:16]
     export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,7 +218,7 @@ def export_blocking_index_to_disk(
         _write_signatures(export_dir / "signatures.csv", blocking_index)
         _write_bucket_index(export_dir / "r1_initials_buckets.csv", "R1", blocking_index.initials_index)
         _write_bucket_index(export_dir / "r2_phonetic_onset_buckets.csv", "R2", blocking_index.phonetic_onset_index)
-        _write_bucket_index(export_dir / "r4_geo_time_buckets.csv", "R4", blocking_index.geo_time_index)
+        _write_bucket_index(export_dir / "r3_geo_time_buckets.csv", "R3", blocking_index.geo_time_index)
         _write_bucket_summary(export_dir / "bucket_summary.csv", blocking_index)
     except OSError:
         # Diagnostic export must never block matching if another process keeps a CSV open.
@@ -206,6 +227,7 @@ def export_blocking_index_to_disk(
 
 
 def are_counters_compatible(counter_a: Counter | dict[str, int], counter_b: Counter | dict[str, int]) -> bool:
+    """Return True when the smaller multiset is included in the larger multiset."""
     a = Counter(counter_a)
     b = Counter(counter_b)
     shorter, longer = (a, b) if sum(a.values()) <= sum(b.values()) else (b, a)
@@ -215,6 +237,7 @@ def are_counters_compatible(counter_a: Counter | dict[str, int], counter_b: Coun
 
 
 def date_diff_days(date_a: object, date_b: object) -> int | None:
+    """Return the absolute day difference between two parseable dates."""
     parsed_a = _as_date(date_a)
     parsed_b = _as_date(date_b)
     if parsed_a is None or parsed_b is None:
@@ -223,6 +246,7 @@ def date_diff_days(date_a: object, date_b: object) -> int | None:
 
 
 def haversine_km(lat1: object, lon1: object, lat2: object, lon2: object) -> float | None:
+    """Return the Haversine distance in kilometers when both coordinates are valid."""
     lat1_float = parse_optional_float(lat1)
     lon1_float = parse_optional_float(lon1)
     lat2_float = parse_optional_float(lat2)
@@ -233,6 +257,7 @@ def haversine_km(lat1: object, lon1: object, lat2: object, lon2: object) -> floa
 
 
 def phonetic_onset(token: str) -> str:
+    """Return the cheap normalized first-sound bucket used by R2 blocking."""
     if not token:
         return ""
     text = str(token).strip().upper()
@@ -256,12 +281,13 @@ def phonetic_onset(token: str) -> str:
 
 
 def _write_metadata(export_dir: Path, blocking_index: BlockingIndex, blocking_config: BlockingConfig) -> None:
+    """Write blocking index metadata as JSON for manual inspection."""
     metadata = {
         "cache_key": blocking_index.cache_key,
         "total_signatures": len(blocking_index.signatures),
         "r1_bucket_count": len(blocking_index.initials_index),
         "r2_bucket_count": len(blocking_index.phonetic_onset_index),
-        "r4_bucket_count": len(blocking_index.geo_time_index),
+        "r3_bucket_count": len(blocking_index.geo_time_index),
         "date_threshold_name_rules": blocking_config.date_threshold_name_rules,
         "geo_threshold_km": blocking_config.geo_threshold_km,
         "date_threshold_geo_rule": blocking_config.date_threshold_geo_rule,
@@ -270,6 +296,7 @@ def _write_metadata(export_dir: Path, blocking_index: BlockingIndex, blocking_co
 
 
 def _write_signatures(path: Path, blocking_index: BlockingIndex) -> None:
+    """Write one CSV row per blocking signature for manual inspection."""
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
@@ -309,6 +336,7 @@ def _write_bucket_index(
     rule: str,
     bucket_index: dict[object, list[str]],
 ) -> None:
+    """Write one CSV row per bucket for a blocking rule."""
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
@@ -327,11 +355,12 @@ def _write_bucket_index(
 
 
 def _write_bucket_summary(path: Path, blocking_index: BlockingIndex) -> None:
+    """Write aggregate bucket size statistics for all standard blocking rules."""
     rows = []
     for rule, bucket_index in [
         ("R1", blocking_index.initials_index),
         ("R2", blocking_index.phonetic_onset_index),
-        ("R4", blocking_index.geo_time_index),
+        ("R3", blocking_index.geo_time_index),
     ]:
         sizes = [len(case_ids) for case_ids in bucket_index.values()]
         rows.append(
@@ -361,15 +390,104 @@ def _write_bucket_summary(path: Path, blocking_index: BlockingIndex) -> None:
 
 
 def _jsonable_bucket_key(bucket_key: object) -> object:
+    """Convert tuple bucket keys to JSON-serializable lists."""
     if isinstance(bucket_key, tuple):
         return [_jsonable_bucket_key(value) for value in bucket_key]
     return bucket_key
+
+
+def _store_blocking_buckets_in_sqlite(blocking_index: BlockingIndex) -> None:
+    """Persist only bucket definitions and case IDs for a blocking index in SQLite."""
+    _ensure_blocking_bucket_table()
+    rows = []
+    for rule, bucket_index in [
+        ("R1", blocking_index.initials_index),
+        ("R2", blocking_index.phonetic_onset_index),
+        ("R3", blocking_index.geo_time_index),
+    ]:
+        for bucket_key, case_ids in bucket_index.items():
+            rows.append(
+                (
+                    blocking_index.cache_key,
+                    rule,
+                    json.dumps(_jsonable_bucket_key(bucket_key), ensure_ascii=False),
+                    json.dumps(sorted(case_ids), ensure_ascii=False),
+                    len(case_ids),
+                )
+            )
+    if not rows:
+        return
+    with sqlite_cache.connect() as connection:
+        connection.execute("DELETE FROM blocking_buckets WHERE cache_key = ?", (blocking_index.cache_key,))
+        connection.executemany(
+            """
+            INSERT INTO blocking_buckets (cache_key, rule, bucket_key, case_ids_json, bucket_size)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        connection.commit()
+
+
+def _load_blocking_buckets_from_sqlite(
+    cache_key: str,
+    signatures: dict[str, BlockingSignature],
+) -> BlockingIndex | None:
+    """Load cached blocking buckets from SQLite for a cache key."""
+    _ensure_blocking_bucket_table()
+    with sqlite_cache.connect() as connection:
+        rows = connection.execute(
+            "SELECT rule, bucket_key, case_ids_json FROM blocking_buckets WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchall()
+    if not rows:
+        return None
+    index = BlockingIndex(cache_key=cache_key, signatures=signatures)
+    for row in rows:
+        bucket_key = _tuple_bucket_key(json.loads(row["bucket_key"]))
+        case_ids = [str(case_id) for case_id in json.loads(row["case_ids_json"])]
+        if row["rule"] == "R1":
+            index.initials_index[bucket_key] = case_ids
+        elif row["rule"] == "R2":
+            index.phonetic_onset_index[bucket_key] = case_ids
+        elif row["rule"] in {"R3", "R4"}:
+            index.geo_time_index[bucket_key] = case_ids
+    return index
+
+
+def _tuple_bucket_key(value: object) -> object:
+    """Convert JSON-loaded list bucket keys back to tuples."""
+    if isinstance(value, list):
+        return tuple(_tuple_bucket_key(item) for item in value)
+    return value
+
+
+def _ensure_blocking_bucket_table() -> None:
+    """Create the SQLite table used to persist blocking buckets if needed."""
+    with sqlite_cache.connect() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS blocking_buckets (
+                cache_key TEXT NOT NULL,
+                rule TEXT NOT NULL,
+                bucket_key TEXT NOT NULL,
+                case_ids_json TEXT NOT NULL,
+                bucket_size INTEGER NOT NULL,
+                PRIMARY KEY (cache_key, rule, bucket_key)
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_blocking_buckets_cache_key ON blocking_buckets(cache_key)"
+        )
+        connection.commit()
 
 
 def _candidate_pair_ids_from_index(
     blocking_index: BlockingIndex,
     blocking_config: BlockingConfig,
 ) -> set[tuple[str, str]]:
+    """Generate candidate ID pairs by crossing compatible cached buckets."""
     pairs: set[tuple[str, str]] = set()
     for signature in blocking_index.signatures.values():
         query_keys = _query_subsignature_keys(signature.initials_bag)
@@ -406,6 +524,7 @@ def _candidate_pair_ids_from_index(
 
 
 def _add_pairs_for_ids(anchor_id: str, candidate_ids: list[str], pairs: set[tuple[str, str]]) -> None:
+    """Add normalized pairs between an anchor ID and bucket member IDs."""
     for candidate_id in candidate_ids:
         if candidate_id == anchor_id:
             continue
@@ -413,6 +532,7 @@ def _add_pairs_for_ids(anchor_id: str, candidate_ids: list[str], pairs: set[tupl
 
 
 def _subsignature_keys(counter: Counter | dict[str, int]) -> list[tuple[str, ...]]:
+    """Generate bounded multiset keys so shorter names can query longer-name buckets."""
     elements = tuple(sorted(Counter(counter).elements()))
     if not elements:
         return []
@@ -427,10 +547,12 @@ def _subsignature_keys(counter: Counter | dict[str, int]) -> list[tuple[str, ...
 
 
 def _query_subsignature_keys(counter: Counter | dict[str, int]) -> list[tuple[str, ...]]:
+    """Return the bucket keys used when querying candidate buckets for one signature."""
     return _subsignature_keys(counter)
 
 
 def _date_bucket(value: date | None, threshold_days: int) -> int | None:
+    """Map a date to an integer bucket based on a day threshold."""
     if value is None:
         return None
     bucket_size = max(int(threshold_days), 1)
@@ -438,6 +560,7 @@ def _date_bucket(value: date | None, threshold_days: int) -> int | None:
 
 
 def _neighbor_date_buckets(value: date | None, threshold_days: int) -> tuple[int | None, ...]:
+    """Return the date bucket and direct neighbors for threshold-boundary safety."""
     bucket = _date_bucket(value, threshold_days)
     if bucket is None:
         return (None,)
@@ -445,6 +568,7 @@ def _neighbor_date_buckets(value: date | None, threshold_days: int) -> tuple[int
 
 
 def _geo_cell(latitude: float | None, longitude: float | None, threshold_km: float) -> tuple[int, int] | None:
+    """Map coordinates to a coarse geographic cell derived from the kilometer threshold."""
     if not _valid_coordinates(latitude, longitude):
         return None
     cell_size_deg = max(float(threshold_km) / 111.0, 0.05)
@@ -457,6 +581,7 @@ def _rule_r1(
     diff_days: int | None,
     config: BlockingConfig,
 ) -> bool:
+    """Evaluate R1: compatible initials and a close disappearance date."""
     return (
         diff_days is not None
         and diff_days <= config.date_threshold_name_rules
@@ -470,6 +595,7 @@ def _rule_r2(
     diff_days: int | None,
     config: BlockingConfig,
 ) -> bool:
+    """Evaluate R2: compatible cheap phonetic onsets and a close disappearance date."""
     return (
         diff_days is not None
         and diff_days <= config.date_threshold_name_rules
@@ -477,7 +603,8 @@ def _rule_r2(
     )
 
 
-def _rule_r4(distance_km: float | None, diff_days: int | None, config: BlockingConfig) -> bool:
+def _rule_r3(distance_km: float | None, diff_days: int | None, config: BlockingConfig) -> bool:
+    """Evaluate R3: strong geographic and temporal proximity."""
     return (
         distance_km is not None
         and diff_days is not None
@@ -493,6 +620,7 @@ def _candidate_pair(
     distance_km: float | None,
     matched_rules: list[str],
 ) -> CandidatePair:
+    """Build a candidate pair object from two blocking signatures and matched rules."""
     return CandidatePair(
         id_A=sig_a.case_id,
         id_B=sig_b.case_id,
@@ -511,6 +639,7 @@ def _candidate_pair(
 
 
 def _as_date(value: object) -> date | None:
+    """Parse a date-like value into a date or return None."""
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -522,6 +651,7 @@ def _as_date(value: object) -> date | None:
 
 
 def _optional_str(value: object) -> str | None:
+    """Return a string for present values and None for missing values."""
     value = none_if_missing(value)
     if value is None:
         return None
@@ -529,6 +659,7 @@ def _optional_str(value: object) -> str | None:
 
 
 def _valid_coordinates(latitude: float | None, longitude: float | None) -> bool:
+    """Return True when latitude and longitude are both inside valid GPS ranges."""
     if latitude is None or longitude is None:
         return False
     return -90 <= latitude <= 90 and -180 <= longitude <= 180

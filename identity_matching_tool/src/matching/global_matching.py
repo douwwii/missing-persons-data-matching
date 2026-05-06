@@ -10,6 +10,7 @@ def find_global_matches(
     records: list[MissingPersonRecord],
     config: AnalysisConfig,
 ) -> list[tuple[MissingPersonRecord, MissingPersonRecord, CombinedSimilarityResult]]:
+    """Compute sorted pairwise matches across all records."""
     results: list[tuple[MissingPersonRecord, MissingPersonRecord, CombinedSimilarityResult]] = []
     threshold = float(config.filter_parameters.get("min_score_threshold", 0.0))
 

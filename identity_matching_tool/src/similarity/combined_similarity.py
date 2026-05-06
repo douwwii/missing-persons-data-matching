@@ -20,8 +20,10 @@ def compute_combined_similarity(
     record_b: MissingPersonRecord,
     config: AnalysisConfig,
 ) -> CombinedSimilarityResult:
+    """Compute enabled similarity filters and combine their calculable scores."""
     enabled_filters = dict(config.enabled_filters)
     parameters = config.filter_parameters
+    cache_context_needed = sum(1 for enabled in enabled_filters.values() if enabled) < 2
 
     name_result = compute_name_similarity(record_a, record_b) if enabled_filters.get("name") else None
     phonetic_result = (
@@ -36,7 +38,7 @@ def compute_combined_similarity(
             distance_min_km=float(parameters.get("geographic_distance_min_km", 5.0)),
             distance_max_km=float(parameters.get("geographic_distance_max_km", 50.0)),
         )
-        if enabled_filters.get("geographic")
+        if enabled_filters.get("geographic") or cache_context_needed
         else None
     )
     temporal_result = (
@@ -45,11 +47,18 @@ def compute_combined_similarity(
             record_b,
             max_days=int(parameters.get("temporal_max_days", 365)),
         )
-        if enabled_filters.get("temporal")
+        if enabled_filters.get("temporal") or cache_context_needed
         else None
     )
 
-    weighted_scores = _weighted_scores(parameters, name_result, phonetic_result, geo_result, temporal_result)
+    weighted_scores = _weighted_scores(
+        parameters,
+        enabled_filters,
+        name_result,
+        phonetic_result,
+        geo_result,
+        temporal_result,
+    )
     if weighted_scores:
         score_final = sum(score * weight for score, weight, _ in weighted_scores) / sum(
             weight for _, weight, _ in weighted_scores
@@ -82,20 +91,27 @@ def compute_combined_similarity(
 
 def _weighted_scores(
     parameters: dict[str, float | int],
+    enabled_filters: dict[str, bool],
     name_result: NameSimilarityResult | None,
     phonetic_result: PhoneticSimilarityResult | None,
     geo_result: GeoSimilarityResult | None,
     temporal_result: TemporalSimilarityResult | None,
 ) -> list[tuple[float, float, str]]:
+    """Collect calculable enabled scores with their configured weights."""
     weighted: list[tuple[float, float, str]] = []
-    if name_result is not None and name_result.status == "ok":
-        weighted.append((name_result.score_final, float(parameters.get("name_weight", 1.0)), "nom"))
-    if phonetic_result is not None and phonetic_result.status == "ok" and phonetic_result.score_final is not None:
-        weighted.append((phonetic_result.score_final, float(parameters.get("phonetic_weight", 1.0)), "phonetique"))
-    if geo_result is not None and geo_result.status == "ok" and geo_result.score is not None:
-        weighted.append((geo_result.score, float(parameters.get("geographic_weight", 1.0)), "localisation"))
-    if temporal_result is not None and temporal_result.status == "ok" and temporal_result.score is not None:
-        weighted.append((temporal_result.score, float(parameters.get("temporal_weight", 1.0)), "temporalite"))
+    if enabled_filters.get("name") and name_result is not None and name_result.status == "ok":
+        weighted.append((name_result.score_final, float(parameters.get("name_weight", 1.0)), "name"))
+    if (
+        enabled_filters.get("phonetic")
+        and phonetic_result is not None
+        and phonetic_result.status == "ok"
+        and phonetic_result.score_final is not None
+    ):
+        weighted.append((phonetic_result.score_final, float(parameters.get("phonetic_weight", 1.0)), "phonetic"))
+    if enabled_filters.get("geographic") and geo_result is not None and geo_result.status == "ok" and geo_result.score is not None:
+        weighted.append((geo_result.score, float(parameters.get("geographic_weight", 1.0)), "location"))
+    if enabled_filters.get("temporal") and temporal_result is not None and temporal_result.status == "ok" and temporal_result.score is not None:
+        weighted.append((temporal_result.score, float(parameters.get("temporal_weight", 1.0)), "time"))
     return [(score, weight, label) for score, weight, label in weighted if weight > 0]
 
 
@@ -107,29 +123,30 @@ def _build_combined_explanation(
     temporal_result: TemporalSimilarityResult | None,
     score_final: float | None,
 ) -> str:
+    """Build a human-readable explanation for the combined score."""
     parts: list[str] = []
     if score_final is None:
-        parts.append("Aucun score combine calculable avec les filtres actives.")
+        parts.append("No combined score can be computed with the enabled filters.")
     else:
         labels = ", ".join(label for _, _, label in weighted_scores)
-        parts.append(f"Score combine {score_final:.3f}, calcule avec les dimensions suivantes : {labels}.")
+        parts.append(f"Combined score {score_final:.3f}, computed with the following dimensions: {labels}.")
 
     skipped = []
     for label, result in [
-        ("nom", name_result),
-        ("phonetique", phonetic_result),
-        ("localisation", geo_result),
-        ("temporalite", temporal_result),
+        ("name", name_result),
+        ("phonetic", phonetic_result),
+        ("location", geo_result),
+        ("time", temporal_result),
     ]:
         if result is not None and result.status != "ok":
             skipped.append(f"{label} ({result.status})")
     if skipped:
-        parts.append("Dimensions ignorees car non calculables : " + ", ".join(skipped) + ".")
+        parts.append("Dimensions ignored because they cannot be computed: " + ", ".join(skipped) + ".")
 
     if name_result is not None and name_result.order_mismatch_suspected:
         parts.append(
-            "Le nom presente une forte similarite apres reorganisation des tokens, ce qui suggere "
-            "une inversion ou un ordre different des elements du nom."
+            "The name has high similarity after token reordering, suggesting an inversion "
+            "or a different order of name elements."
         )
         if (
             phonetic_result is not None
@@ -138,13 +155,14 @@ def _build_combined_explanation(
             and phonetic_result.score_final < 0.70
         ):
             parts.append(
-                "Le score phonetique reordonne reste faible malgre la reorganisation des elements du nom."
+                "The reordered phonetic score remains low despite reordering the name elements."
             )
 
     return " ".join(parts)
 
 
 def _clamp_optional(value: float | None) -> float | None:
+    """Clamp a score when present and preserve None when absent."""
     if value is None:
         return None
     return max(0.0, min(1.0, float(value)))

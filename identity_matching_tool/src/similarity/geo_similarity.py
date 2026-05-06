@@ -12,11 +12,12 @@ def compute_geo_similarity(
     distance_min_km: float,
     distance_max_km: float,
 ) -> GeoSimilarityResult:
+    """Compute geographic similarity from existing GPS coordinates."""
     if distance_min_km < 0 or distance_max_km <= distance_min_km:
         return GeoSimilarityResult(
             score=None,
             distance_km=None,
-            explanation="Similarite geographique non calculable : parametres de distance invalides.",
+            explanation="Geographic similarity cannot be computed: invalid distance parameters.",
             status="invalid_parameters",
         )
 
@@ -28,7 +29,7 @@ def compute_geo_similarity(
         return GeoSimilarityResult(
             score=None,
             distance_km=None,
-            explanation="Similarite geographique non calculable : coordonnees GPS manquantes ou invalides.",
+            explanation="Geographic similarity cannot be computed: missing or invalid GPS coordinates.",
             status="missing_coordinates",
         )
 
@@ -43,12 +44,13 @@ def compute_geo_similarity(
     return GeoSimilarityResult(
         score=_clamp(score),
         distance_km=distance_km,
-        explanation=f"Distance GPS de {distance_km:.1f} km entre les deux dossiers.",
+        explanation=f"GPS distance of {distance_km:.1f} km between the two case records.",
         status="ok",
     )
 
 
 def haversine_distance_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
+    """Return the great-circle distance in kilometers between two GPS points."""
     earth_radius_km = 6371.0088
     delta_lat = radians(lat_b - lat_a)
     delta_lon = radians(lon_b - lon_a)
@@ -59,10 +61,12 @@ def haversine_distance_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float
 
 
 def _valid_coordinates(latitude: float | None, longitude: float | None) -> bool:
+    """Return True when both coordinate values are present and inside GPS ranges."""
     if latitude is None or longitude is None:
         return False
     return -90 <= latitude <= 90 and -180 <= longitude <= 180
 
 
 def _clamp(value: float) -> float:
+    """Constrain a numeric score to the inclusive 0..1 range."""
     return max(0.0, min(1.0, float(value)))

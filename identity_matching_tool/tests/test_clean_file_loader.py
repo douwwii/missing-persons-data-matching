@@ -68,5 +68,4 @@ def test_unreadable_file_raises_user_readable_error() -> None:
     with pytest.raises(CleanFileLoadingError) as exc_info:
         load_clean_csv("does-not-exist.csv")
 
-    assert "introuvable ou inaccessible" in str(exc_info.value)
-
+    assert "cannot be found or accessed" in str(exc_info.value)

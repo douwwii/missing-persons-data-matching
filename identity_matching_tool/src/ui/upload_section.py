@@ -9,15 +9,16 @@ from src.data_loading.clean_file_loader import CleanFileLoadingError, load_clean
 
 
 def render_upload_section():
-    st.subheader("Etape 2 - Chargement du fichier clean")
+    """Render the CSV upload area and return the loaded clean dataset."""
+    st.subheader("Step 1 - Load the clean file")
     uploaded_file = st.file_uploader(
-        "Charger le fichier CSV clean produit par l'etape 1",
+        "Upload the clean CSV file produced by step 1",
         type=["csv"],
         accept_multiple_files=False,
     )
 
     if uploaded_file is None:
-        st.info("Deposez un fichier CSV clean pour commencer l'analyse.")
+        st.info("Drop a clean CSV file to start the analysis.")
         return None
 
     file_bytes = uploaded_file.getvalue()
@@ -27,41 +28,38 @@ def render_upload_section():
         and "loaded_clean_dataset" in st.session_state
     ):
         df = st.session_state["loaded_clean_dataset"]
-        st.success("Fichier deja charge. Les donnees sont conservees pendant la session.")
-        st.caption("Apercu des premiers dossiers")
+        st.success("File already loaded. Data is kept during this session.")
+        st.caption("Preview of the first case records")
         st.dataframe(df.head(10), use_container_width=True)
         return df
 
     try:
-        progress = st.progress(0, text="Lecture du fichier CSV")
-        progress.progress(25, text="Lecture du fichier CSV")
-        df = _load_csv_from_bytes(file_bytes)
-        progress.progress(80, text="Preparation de l'apercu")
+        with st.spinner("Loading the clean CSV file..."):
+            df = _load_csv_from_bytes(file_bytes)
     except CleanFileLoadingError as exc:
         st.error(str(exc))
         return None
-    finally:
-        if "progress" in locals():
-            progress.empty()
 
     st.session_state["uploaded_file_signature"] = file_signature
     st.session_state["loaded_clean_dataset"] = df
     st.session_state.pop("analysis_config", None)
     st.session_state.pop("analysis_results", None)
 
-    st.success("Fichier charge avec succes.")
-    st.caption("Apercu des premiers dossiers")
+    st.success("File loaded successfully.")
+    st.caption("Preview of the first case records")
     st.dataframe(df.head(10), use_container_width=True)
     return df
 
 
 def _file_signature(file_name: str, file_bytes: bytes) -> str:
+    """Create a stable session signature for an uploaded file."""
     digest = hashlib.sha256(file_bytes).hexdigest()
     return f"{file_name}:{digest}"
 
 
 @st.cache_data(show_spinner=False)
 def _load_csv_from_bytes(file_bytes: bytes) -> pd.DataFrame:
+    """Load CSV bytes through the clean file loader with Streamlit caching."""
     from io import BytesIO
 
     return load_clean_csv(BytesIO(file_bytes))

@@ -11,11 +11,12 @@ def compute_temporal_similarity(
     record_b: MissingPersonRecord,
     max_days: int,
 ) -> TemporalSimilarityResult:
+    """Compute temporal similarity from parsed disappearance dates."""
     if max_days <= 0:
         return TemporalSimilarityResult(
             score=None,
             distance_days=None,
-            explanation="Similarite temporelle non calculable : max_days doit etre strictement positif.",
+            explanation="Temporal similarity cannot be computed: max_days must be strictly positive.",
             status="invalid_parameters",
         )
 
@@ -25,7 +26,7 @@ def compute_temporal_similarity(
         return TemporalSimilarityResult(
             score=None,
             distance_days=None,
-            explanation="Similarite temporelle non calculable : date de disparition manquante ou invalide.",
+            explanation="Temporal similarity cannot be computed: missing or invalid disappearance date.",
             status="missing_date",
         )
 
@@ -35,12 +36,13 @@ def compute_temporal_similarity(
     return TemporalSimilarityResult(
         score=_clamp(score),
         distance_days=distance_days,
-        explanation=f"Ecart de {distance_days} jour(s) entre les dates de disparition.",
+        explanation=f"Gap of {distance_days} day(s) between disappearance dates.",
         status="ok",
     )
 
 
 def _as_date(value: object) -> date | None:
+    """Parse a date-like value into a date or return None."""
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -52,4 +54,5 @@ def _as_date(value: object) -> date | None:
 
 
 def _clamp(value: float) -> float:
+    """Constrain a numeric score to the inclusive 0..1 range."""
     return max(0.0, min(1.0, float(value)))

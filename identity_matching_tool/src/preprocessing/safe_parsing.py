@@ -8,6 +8,7 @@ import pandas as pd
 
 
 def none_if_missing(value: Any) -> Any | None:
+    """Normalize pandas/empty missing values to None."""
     if value is None:
         return None
     if isinstance(value, (list, tuple, dict, set)):
@@ -23,6 +24,7 @@ def none_if_missing(value: Any) -> Any | None:
 
 
 def parse_optional_float(value: Any) -> float | None:
+    """Parse a float value while tolerating missing or malformed inputs."""
     value = none_if_missing(value)
     if value is None:
         return None
@@ -33,6 +35,7 @@ def parse_optional_float(value: Any) -> float | None:
 
 
 def parse_optional_date(value: Any) -> date | datetime | None:
+    """Parse a date-like value while tolerating missing or malformed inputs."""
     value = none_if_missing(value)
     if value is None:
         return None
@@ -43,6 +46,7 @@ def parse_optional_date(value: Any) -> date | datetime | None:
 
 
 def parse_name_tokens(value: Any) -> list[str]:
+    """Parse the name_tokens field into a list of string tokens."""
     value = none_if_missing(value)
     if value is None:
         return []

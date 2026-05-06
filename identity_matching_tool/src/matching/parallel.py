@@ -7,10 +7,12 @@ from time import perf_counter
 from typing import Any, Callable
 
 from src.matching.pairwise_cache import (
-    build_cache_lookup,
-    cached_row_to_result,
+    build_component_cache_lookup,
+    component_row_for_records,
+    component_row_to_result,
+    insert_component_rows,
     make_pair_key,
-    store_pair_results_batch,
+    should_store_component_row,
 )
 from src.models import AnalysisConfig, CombinedSimilarityResult, MissingPersonRecord, PairMatchingResult, ParallelConfig
 from src.similarity.combined_similarity import compute_combined_similarity
@@ -27,6 +29,7 @@ def parallel_compute_pair_scores(
     cache_manager: object | None = None,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> list[PairMatchingResult]:
+    """Compute pair scores with cache lookup, optional IPA precomputation, and parallel workers."""
     del cache_manager
     started_at = perf_counter()
     normalized_pairs = _normalize_pairs(pairs)
@@ -34,15 +37,18 @@ def parallel_compute_pair_scores(
     pairs_to_compute: list[tuple[str, str]] = []
 
     if use_cache:
-        cache_lookup = build_cache_lookup(analysis_config)
+        component_cache_lookup = build_component_cache_lookup(records_by_id, analysis_config)
         for id_a, id_b in normalized_pairs:
-            cached = cache_lookup.get(make_pair_key(id_a, id_b))
-            if cached is None:
-                pairs_to_compute.append((id_a, id_b))
+            pair_key = make_pair_key(id_a, id_b)
+            cached = component_cache_lookup.get(pair_key)
+            if cached is not None:
+                cached_results.append(
+                    _cached_pair_result(id_a, id_b, records_by_id, cached, analysis_config)
+                )
             else:
-                cached_results.append(_cached_pair_result(id_a, id_b, records_by_id, cached))
+                pairs_to_compute.append((id_a, id_b))
             if progress_callback is not None:
-                progress_callback("Verification du cache", len(cached_results) + len(pairs_to_compute), len(normalized_pairs))
+                progress_callback("Checking cache", len(cached_results) + len(pairs_to_compute), len(normalized_pairs))
     else:
         pairs_to_compute = normalized_pairs
 
@@ -79,26 +85,37 @@ def parallel_compute_pair_scores(
         for result in computed_results:
             result.explanation = (
                 result.explanation
-                + " Le calcul parallele a echoue ; cette paire a ete recalculee en mode debug sequentiel."
-            )
+                + " Parallel computation failed; this pair was recomputed in sequential debug mode."
+    )
 
     if use_cache:
-        rows_to_store = [
-            (result.id_A, result.id_B, result.similarity_result)
+        component_rows = [
+            row
             for result in computed_results
             if result.similarity_result is not None
+            for row in [
+                component_row_for_records(
+                    result.id_A,
+                    result.id_B,
+                    records_by_id[result.id_A],
+                    records_by_id[result.id_B],
+                    analysis_config,
+                    result.similarity_result,
+                )
+            ]
+            if should_store_component_row(row)
         ]
-        if progress_callback is not None and rows_to_store:
-            progress_callback("Mise a jour du cache", 0, len(rows_to_store))
-        store_pair_results_batch(rows_to_store, analysis_config)
-        if progress_callback is not None and rows_to_store:
-            progress_callback("Mise a jour du cache", len(rows_to_store), len(rows_to_store))
+        if progress_callback is not None and component_rows:
+            progress_callback("Updating cache", 0, len(component_rows))
+        insert_component_rows(component_rows)
+        if progress_callback is not None and component_rows:
+            progress_callback("Updating cache", len(component_rows), len(component_rows))
 
     all_results = cached_results + computed_results
     elapsed = perf_counter() - started_at
     cached_count = len(cached_results)
     for result in all_results:
-        result.explanation = result.explanation or f"Score calcule en {elapsed:.3f} s."
+        result.explanation = result.explanation or f"Score computed in {elapsed:.3f} s."
     return all_results
 
 
@@ -107,6 +124,7 @@ def compute_pair_chunk(
     serialized_records: dict[str, dict[str, Any]],
     serialized_config: dict[str, Any],
 ) -> list[PairMatchingResult]:
+    """Compute a chunk of pair scores inside a multiprocessing-compatible worker."""
     records_by_id = {
         case_id: deserialize_record(record_data) for case_id, record_data in serialized_records.items()
     }
@@ -127,6 +145,7 @@ def should_use_parallelism(
     auto_parallel_threshold_pairs: int = 500,
     auto_parallel_threshold_pairs_with_phonetic: int = 100,
 ) -> bool:
+    """Decide whether parallel execution is worthwhile for the current workload."""
     if num_workers <= 1:
         return False
     threshold = auto_parallel_threshold_pairs_with_phonetic if phonetic_enabled else auto_parallel_threshold_pairs
@@ -134,22 +153,26 @@ def should_use_parallelism(
 
 
 def serialize_record(record: MissingPersonRecord) -> dict[str, Any]:
+    """Serialize a record into multiprocessing-safe primitive data."""
     data = asdict(record)
     data["disappearance_date_parsed"] = _serialize_date(record.disappearance_date_parsed)
     return data
 
 
 def deserialize_record(data: dict[str, Any]) -> MissingPersonRecord:
+    """Rebuild a missing person record from serialized primitive data."""
     copied = dict(data)
     copied["disappearance_date_parsed"] = _deserialize_date(copied.get("disappearance_date_parsed"))
     return MissingPersonRecord(**copied)
 
 
 def serialize_config(config: AnalysisConfig) -> dict[str, Any]:
+    """Serialize analysis configuration for multiprocessing workers."""
     return asdict(config)
 
 
 def deserialize_config(data: dict[str, Any]) -> AnalysisConfig:
+    """Rebuild analysis configuration from serialized worker data."""
     return AnalysisConfig(**data)
 
 
@@ -158,6 +181,7 @@ def pair_result_from_similarity(
     record_b: MissingPersonRecord,
     similarity: CombinedSimilarityResult,
 ) -> PairMatchingResult:
+    """Create a pair matching result from a computed combined similarity result."""
     return PairMatchingResult(
         id_A=record_a.case_id,
         id_B=record_b.case_id,
@@ -200,6 +224,7 @@ def _compute_pairs(
     chunk_size: int,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> list[PairMatchingResult]:
+    """Compute missing pair scores sequentially or through a process pool."""
     if not pairs_to_compute:
         return []
     if num_workers <= 1:
@@ -213,7 +238,7 @@ def _compute_pairs(
             processed += len(chunk)
             if progress_callback is not None:
                 progress_callback(
-                    f"Calcul des scores - chunk {chunk_number}/{total_chunks}",
+                    f"Computing scores - chunk {chunk_number}/{total_chunks}",
                     processed,
                     len(pairs_to_compute),
                 )
@@ -237,14 +262,14 @@ def _compute_pairs(
                 completed_chunks += 1
                 if progress_callback is not None:
                     progress_callback(
-                        f"Calcul des scores en parallele - chunk {completed_chunks}/{total_chunks}",
+                        f"Computing scores in parallel - chunk {completed_chunks}/{total_chunks}",
                         min(len(results), len(pairs_to_compute)),
                         len(pairs_to_compute),
                     )
     except Exception as exc:
         raise RuntimeError(
-            "Une erreur est survenue pendant le calcul parallele. "
-            "Relancez en mode debug pour identifier le probleme."
+            "An error occurred during parallel computation. "
+            "Run again in debug mode to identify the problem."
         ) from exc
     result_order = {pair: index for index, pair in enumerate(pairs_to_compute)}
     results.sort(key=lambda result: result_order.get((result.id_A, result.id_B), 0))
@@ -254,6 +279,7 @@ def _compute_pairs(
 def _normalize_pairs(
     pairs: list[tuple[MissingPersonRecord, MissingPersonRecord]] | list[tuple[str, str]],
 ) -> list[tuple[str, str]]:
+    """Convert record-pair or ID-pair inputs to normalized ID pairs."""
     normalized: list[tuple[str, str]] = []
     for left, right in pairs:
         id_a = left.case_id if isinstance(left, MissingPersonRecord) else str(left)
@@ -267,16 +293,16 @@ def _cached_pair_result(
     id_b: str,
     records_by_id: dict[str, MissingPersonRecord],
     cached_row: dict[str, Any],
+    analysis_config: AnalysisConfig,
 ) -> PairMatchingResult:
+    """Convert a cached row into a pair matching result."""
     record_a = records_by_id[id_a]
     record_b = records_by_id[id_b]
-    similarity = cached_row_to_result(cached_row)
+    similarity = component_row_to_result(cached_row, analysis_config)
     result = pair_result_from_similarity(record_a, record_b, similarity)
     result.score_name = _optional_float(cached_row.get("score_name"))
     result.score_phonetic = _optional_float(cached_row.get("score_phonetic"))
     result.phonetic_status = _optional_str(cached_row.get("phonetic_status"))
-    result.score_geographic = _optional_float(cached_row.get("score_geographic"))
-    result.score_temporal = _optional_float(cached_row.get("score_temporal"))
     result.name_direct_structured_score = _optional_float(cached_row.get("name_direct_structured_score"))
     result.name_direct_full_name_score = _optional_float(cached_row.get("name_direct_full_name_score"))
     result.name_reordered_full_name_score = _optional_float(cached_row.get("name_reordered_full_name_score"))
@@ -285,17 +311,19 @@ def _cached_pair_result(
     result.name_best_method = _optional_str(cached_row.get("name_best_method"))
     result.distance_km = _optional_float(cached_row.get("distance_km"))
     result.distance_days = _optional_int(cached_row.get("distance_days"))
-    result.similarity_result = None
+    result.similarity_result = similarity
     result.from_cache = True
     return result
 
 
 def _chunk_pairs(pairs: list[tuple[str, str]], chunk_size: int) -> list[list[tuple[str, str]]]:
+    """Split pair IDs into fixed-size chunks."""
     safe_chunk_size = max(int(chunk_size), 1)
     return [pairs[index : index + safe_chunk_size] for index in range(0, len(pairs), safe_chunk_size)]
 
 
 def _serialize_date(value: object) -> str | None:
+    """Serialize date-like values to ISO text for workers."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -306,6 +334,7 @@ def _serialize_date(value: object) -> str | None:
 
 
 def _deserialize_date(value: object) -> date | datetime | None:
+    """Deserialize ISO date text back to date or datetime objects."""
     if value is None:
         return None
     if isinstance(value, datetime) or isinstance(value, date):
@@ -320,6 +349,7 @@ def _deserialize_date(value: object) -> date | datetime | None:
 
 
 def _optional_float(value: Any) -> float | None:
+    """Parse an optional float from cached or serialized data."""
     if value is None or str(value) == "nan":
         return None
     try:
@@ -329,6 +359,7 @@ def _optional_float(value: Any) -> float | None:
 
 
 def _optional_int(value: Any) -> int | None:
+    """Parse an optional integer from cached or serialized data."""
     if value is None or str(value) == "nan":
         return None
     try:
@@ -338,6 +369,7 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _optional_bool(value: Any) -> bool | None:
+    """Parse an optional boolean from cached or serialized data."""
     if value is None or str(value) == "nan":
         return None
     if isinstance(value, bool):
@@ -346,6 +378,7 @@ def _optional_bool(value: Any) -> bool | None:
 
 
 def _optional_str(value: Any) -> str | None:
+    """Parse an optional string from cached or serialized data."""
     if value is None or str(value) == "nan":
         return None
     return str(value)

@@ -7,6 +7,7 @@ from src.models import DatasetValidationResult
 
 
 def validate_clean_dataset(df: pd.DataFrame) -> DatasetValidationResult:
+    """Validate required/recommended schema columns and basic dataset quality counts."""
     columns = set(df.columns)
     missing_required = [column for column in REQUIRED_COLUMNS if column not in columns]
     missing_recommended = [column for column in RECOMMENDED_COLUMNS if column not in columns]
@@ -19,11 +20,11 @@ def validate_clean_dataset(df: pd.DataFrame) -> DatasetValidationResult:
 
     is_valid = not missing_required
     if is_valid:
-        message = "Le fichier clean contient les colonnes obligatoires et peut etre configure."
+        message = "The clean file contains the required columns and can be configured."
     else:
         message = (
-            "Le fichier clean ne peut pas etre utilise en l'etat. "
-            f"Colonnes obligatoires manquantes : {', '.join(missing_required)}."
+            "The clean file cannot be used as is. "
+            f"Missing required columns: {', '.join(missing_required)}."
         )
 
     return DatasetValidationResult(
@@ -42,12 +43,14 @@ def validate_clean_dataset(df: pd.DataFrame) -> DatasetValidationResult:
 
 
 def _missing_count(df: pd.DataFrame, column: str) -> int:
+    """Count null or blank values in a DataFrame column."""
     if column not in df.columns:
         return len(df)
     return int(df[column].isna().sum() + (df[column].astype(str).str.strip() == "").sum())
 
 
 def _duplicated_case_ids_count(df: pd.DataFrame) -> int:
+    """Count case IDs that appear more than once."""
     if "case_id" not in df.columns:
         return 0
     case_ids = df["case_id"].dropna().astype(str).str.strip()
@@ -56,6 +59,7 @@ def _duplicated_case_ids_count(df: pd.DataFrame) -> int:
 
 
 def _coordinates_counts(df: pd.DataFrame) -> tuple[int, int]:
+    """Count valid and invalid GPS coordinate rows."""
     if "latitude" not in df.columns or "longitude" not in df.columns:
         return 0, len(df)
     latitude = pd.to_numeric(df["latitude"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
@@ -66,9 +70,9 @@ def _coordinates_counts(df: pd.DataFrame) -> tuple[int, int]:
 
 
 def _date_counts(df: pd.DataFrame) -> tuple[int, int]:
+    """Count valid and invalid parsed disappearance dates."""
     if "disappearance_date_parsed" not in df.columns:
         return 0, len(df)
     dates = pd.to_datetime(df["disappearance_date_parsed"], errors="coerce")
     valid_count = int(dates.notna().sum())
     return valid_count, int(len(df) - valid_count)
-

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import types
 
+from src.cache import sqlite_cache
 from src.models import MissingPersonRecord
 from src.similarity import phonetic_similarity
 from src.similarity.phonetic_similarity import compute_phonetic_similarity, precompute_ipa_for_records
@@ -76,7 +77,7 @@ def test_reordered_phonetic_comparison_handles_inverted_tokens(monkeypatch) -> N
     assert result.status == "ok"
     assert result.score_final == 1.0
     assert result.ipa_a == result.ipa_b
-    assert "tries par ordre IPA" in result.explanation
+    assert "sorted by IPA order" in result.explanation
 
 
 def test_missing_name() -> None:
@@ -105,8 +106,7 @@ def test_unavailable_when_epitran_missing(monkeypatch) -> None:
 
 
 def test_precompute_ipa_cache_is_used_for_pair_comparison(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(phonetic_similarity, "PHONETIC_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(phonetic_similarity, "PHONETIC_CACHE_FILE", tmp_path / "phonetic_ipa_cache.csv")
+    monkeypatch.setattr(sqlite_cache, "CACHE_DIR", tmp_path)
     monkeypatch.setattr(phonetic_similarity, "_PANPHON_DISTANCE", None)
     install_fake_phonetic_modules(monkeypatch, distance_value=1.0)
     record_a = record("jose perez")
@@ -116,7 +116,7 @@ def test_precompute_ipa_cache_is_used_for_pair_comparison(tmp_path, monkeypatch)
     result = compute_phonetic_similarity(record_a, record_b)
 
     assert stats["computed"] == 2
-    assert phonetic_similarity.PHONETIC_CACHE_FILE.exists()
+    assert sqlite_cache.cache_db_path().exists()
     assert result.status == "ok"
     assert result.score_final is not None
     assert result.ipa_a == "jose perez"

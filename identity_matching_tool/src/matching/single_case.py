@@ -9,9 +9,10 @@ def find_single_case_matches(
     selected_case_id: str,
     config: AnalysisConfig,
 ) -> list[tuple[MissingPersonRecord, CombinedSimilarityResult]]:
+    """Compute sorted matches for one selected case against all other records."""
     target = next((record for record in records if record.case_id == selected_case_id), None)
     if target is None:
-        raise ValueError(f"Dossier cible introuvable : {selected_case_id}")
+        raise ValueError(f"Target case not found: {selected_case_id}")
 
     results: list[tuple[MissingPersonRecord, CombinedSimilarityResult]] = []
     for candidate in records:

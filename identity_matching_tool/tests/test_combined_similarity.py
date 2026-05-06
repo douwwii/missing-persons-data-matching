@@ -77,7 +77,7 @@ def test_non_calculable_score_is_ignored() -> None:
     assert result.geo_result is not None
     assert result.geo_result.status == "missing_coordinates"
     assert result.score_final == pytest.approx(result.name_result.score_final)
-    assert "ignorees" in result.explanation
+    assert "ignored" in result.explanation
 
 
 def test_different_weights_change_score() -> None:
@@ -112,5 +112,4 @@ def test_global_explanation_mentions_order_mismatch() -> None:
 
     assert result.name_result is not None
     assert result.name_result.order_mismatch_suspected is True
-    assert "ordre different" in result.explanation
-
+    assert "different order" in result.explanation
