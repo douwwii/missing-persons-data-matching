@@ -28,7 +28,7 @@ def build_blocking_signature(record: MissingPersonRecord) -> BlockingSignature:
     """Build the lightweight per-record data used by standard blocking rules."""
     tokens = _blocking_tokens(record)
     initials = Counter(token[0].upper() for token in tokens if token)
-    onsets = Counter(phonetic_onset(token) for token in tokens if phonetic_onset(token))
+    onsets = Counter(onset for token in tokens if (onset := phonetic_onset(token)))
     parsed_date = _as_date(record.disappearance_date_parsed)
     latitude = parse_optional_float(record.latitude)
     longitude = parse_optional_float(record.longitude)
@@ -83,8 +83,8 @@ def generate_standard_blocking_pairs(
     for id_a, id_b in pairs:
         sig_a = signatures[id_a]
         sig_b = signatures[id_b]
-        diff_days = date_diff_days(sig_a.parsed_date, sig_b.parsed_date)
-        distance_km = haversine_km(sig_a.latitude, sig_a.longitude, sig_b.latitude, sig_b.longitude)
+        diff_days = _signature_date_diff_days(sig_a.parsed_date, sig_b.parsed_date)
+        distance_km = _signature_haversine_km(sig_a.latitude, sig_a.longitude, sig_b.latitude, sig_b.longitude)
 
         matched_rules: list[str] = []
         if _rule_r1(sig_a, sig_b, diff_days, blocking_config):
@@ -139,7 +139,7 @@ def get_or_build_blocking_index(
         _BLOCKING_INDEX_CACHE.clear()
         _BLOCKING_INDEX_CACHE[cache_key] = cached_index
         return cached_index
-    index = build_standard_blocking_index(records, blocking_config, cache_key=cache_key)
+    index = build_standard_blocking_index(records, blocking_config, cache_key=cache_key, signatures=signatures)
     _store_blocking_buckets_in_sqlite(index)
     export_blocking_index_to_disk(index, blocking_config)
     _BLOCKING_INDEX_CACHE.clear()
@@ -151,9 +151,10 @@ def build_standard_blocking_index(
     records: list[MissingPersonRecord],
     blocking_config: BlockingConfig,
     cache_key: str | None = None,
+    signatures: dict[str, BlockingSignature] | None = None,
 ) -> BlockingIndex:
     """Build bucket indexes for initials, simple phonetic onsets, and geo-time cells."""
-    signatures = {record.case_id: build_blocking_signature(record) for record in records}
+    signatures = signatures or {record.case_id: build_blocking_signature(record) for record in records}
     index = BlockingIndex(cache_key=cache_key or make_blocking_index_cache_key(records, blocking_config), signatures=signatures)
 
     for signature in signatures.values():
@@ -254,6 +255,25 @@ def haversine_km(lat1: object, lon1: object, lat2: object, lon2: object) -> floa
     if not _valid_coordinates(lat1_float, lon1_float) or not _valid_coordinates(lat2_float, lon2_float):
         return None
     return haversine_distance_km(lat1_float, lon1_float, lat2_float, lon2_float)
+
+
+def _signature_date_diff_days(date_a: date | None, date_b: date | None) -> int | None:
+    """Return a day difference for dates already normalized in blocking signatures."""
+    if date_a is None or date_b is None:
+        return None
+    return abs((date_a - date_b).days)
+
+
+def _signature_haversine_km(
+    lat1: float | None,
+    lon1: float | None,
+    lat2: float | None,
+    lon2: float | None,
+) -> float | None:
+    """Return a GPS distance for coordinates already normalized in blocking signatures."""
+    if not _valid_coordinates(lat1, lon1) or not _valid_coordinates(lat2, lon2):
+        return None
+    return haversine_distance_km(lat1, lon1, lat2, lon2)
 
 
 def phonetic_onset(token: str) -> str:

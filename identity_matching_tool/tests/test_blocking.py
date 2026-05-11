@@ -193,6 +193,43 @@ def test_blocking_index_is_reused_for_same_dataset_and_config(monkeypatch) -> No
     assert calls["count"] == 1
 
 
+def test_blocking_parses_dates_and_coordinates_once_per_signature(monkeypatch) -> None:
+    import src.matching.blocking as blocking
+
+    clear_blocking_index_cache()
+    calls = {"date": 0, "float": 0, "signature": 0}
+    original_parse_date = blocking.parse_optional_date
+    original_parse_float = blocking.parse_optional_float
+    original_build_signature = blocking.build_blocking_signature
+
+    def counting_parse_date(*args, **kwargs):
+        calls["date"] += 1
+        return original_parse_date(*args, **kwargs)
+
+    def counting_parse_float(*args, **kwargs):
+        calls["float"] += 1
+        return original_parse_float(*args, **kwargs)
+
+    def counting_build_signature(*args, **kwargs):
+        calls["signature"] += 1
+        return original_build_signature(*args, **kwargs)
+
+    monkeypatch.setattr(blocking, "parse_optional_date", counting_parse_date)
+    monkeypatch.setattr(blocking, "parse_optional_float", counting_parse_float)
+    monkeypatch.setattr(blocking, "build_blocking_signature", counting_build_signature)
+    data = [
+        record("A", "juan pablo", "2024-01-01", 48.8566, 2.3522),
+        record("B", "juan pablo", "2024-01-02", 48.8570, 2.3530),
+        record("C", "juan pablo", "2024-01-03", 48.8575, 2.3535),
+    ]
+
+    generate_standard_blocking_pairs(data, BlockingConfig())
+
+    assert calls["signature"] == len(data)
+    assert calls["date"] == len(data)
+    assert calls["float"] == len(data) * 2
+
+
 def test_blocking_index_is_exported_to_disk(tmp_path) -> None:
     clear_blocking_index_cache()
     data = [record("A", "juan pablo"), record("B", "juan pablo", "2024-01-02")]
