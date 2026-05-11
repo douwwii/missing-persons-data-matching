@@ -7,9 +7,10 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.config import INVESTIGATION_MODE_GLOBAL, INVESTIGATION_MODE_SINGLE
-from src.matching.matching_engine import run_matching
+from src.matching.matching_engine import run_matching, run_matching_on_pair_results
 from src.models import AnalysisConfig, BlockingConfig, MatchingRunResult, MissingPersonRecord, ParallelConfig
 from src.similarity.combined_similarity import compute_combined_similarity
+from src.ui.analysis_history import append_refinement_step, initialize_analysis_history, navigate_history
 
 INVESTIGATION_MODE_OPTIONS = {
     "Single case matching": (
@@ -199,6 +200,8 @@ def render_configuration_panel(
         st.session_state["blocking_config"] = blocking_config
         st.session_state["parallel_config"] = parallel_config
         st.session_state.pop("analysis_results", None)
+        st.session_state.pop("analysis_history", None)
+        st.session_state.pop("analysis_history_index", None)
         st.session_state.pop("open_match_detail_index", None)
         st.session_state.pop("scroll_to_results_table", None)
         st.session_state.pop("scroll_to_detail_top", None)
@@ -274,13 +277,14 @@ def render_analysis_launcher(
                 status_placeholder.caption(f"{step_label} : {current}/{total}")
 
             with st.spinner("Computing potential matches..."):
-                st.session_state["analysis_results"] = run_matching(
+                result = run_matching(
                     records,
                     config,
                     blocking_config,
                     parallel_config,
                     progress_callback=update_progress,
                 )
+                initialize_analysis_history(st.session_state, result, config)
             progress.progress(100, text="Analysis complete")
             status_placeholder.empty()
             progress.empty()
@@ -311,6 +315,8 @@ def _render_matching_result(result: MatchingRunResult, records: list[MissingPers
         else:
             _render_pair_details_page(pair, {record.case_id: record for record in records})
             return
+
+    _render_analysis_history_navigation()
 
     metric_a, metric_b, metric_c, metric_d = st.columns(4)
     metric_a.metric("Case records", result.total_records)
@@ -394,6 +400,8 @@ def _render_matching_result(result: MatchingRunResult, records: list[MissingPers
                 }
             )
 
+    _render_refinement_panel(result, records)
+
     rows = _result_rows(result)
     if not rows:
         st.info("No potential matches to display.")
@@ -404,6 +412,138 @@ def _render_matching_result(result: MatchingRunResult, records: list[MissingPers
     st.success(f"{len(rows)} potential match(es) displayed.")
     st.caption("Use the Detail match button at the end of a row to open the dedicated match review page.")
     _render_result_rows_with_buttons(result, rows, records)
+
+
+def _render_analysis_history_navigation() -> None:
+    """Render previous/next navigation for temporary analysis history."""
+    history = st.session_state.get("analysis_history", [])
+    if not history:
+        return
+    index = int(st.session_state.get("analysis_history_index", 0))
+    left, middle, right = st.columns([1, 2, 1])
+    if left.button("Previous analysis", disabled=index <= 0, use_container_width=True):
+        navigate_history(st.session_state, -1)
+        st.rerun()
+    middle.caption(f"Analysis step {index + 1} of {len(history)}")
+    if right.button("Next analysis", disabled=index >= len(history) - 1, use_container_width=True):
+        navigate_history(st.session_state, 1)
+        st.rerun()
+
+
+def _render_refinement_panel(result: MatchingRunResult, records: list[MissingPersonRecord]) -> None:
+    """Render controls for rescoring the currently displayed result pairs."""
+    if not result.results:
+        return
+    with st.expander("Refine current results"):
+        st.caption("Only the potential matches currently displayed below will be rescored.")
+        config = _refinement_config_from_controls(result)
+        if not any(config.enabled_filters.values()):
+            st.warning("Enable at least one similarity filter before running a refinement.")
+            return
+        if st.button("Run refinement on displayed results", type="primary", key="run_visible_results_refinement"):
+            progress = st.progress(0, text="Preparing refinement")
+            status_placeholder = st.empty()
+
+            def update_progress(step_label: str, current: int, total: int) -> None:
+                total = max(total, 1)
+                ratio = min(max(current / total, 0.0), 1.0)
+                start, end = _progress_range_for_step(step_label)
+                percent = int(start + ratio * (end - start))
+                progress.progress(percent, text=f"{step_label} : {current}/{total}")
+                status_placeholder.caption(f"{step_label} : {current}/{total}")
+
+            with st.spinner("Refining displayed potential matches..."):
+                refined = run_matching_on_pair_results(
+                    records,
+                    result.results,
+                    config,
+                    st.session_state.get("parallel_config"),
+                    progress_callback=update_progress,
+                )
+                append_refinement_step(st.session_state, refined, config)
+            progress.progress(100, text="Refinement complete")
+            status_placeholder.empty()
+            progress.empty()
+            st.rerun()
+
+
+def _refinement_config_from_controls(result: MatchingRunResult) -> AnalysisConfig:
+    """Build a refinement config from compact controls scoped to visible pairs."""
+    base_config = st.session_state.get("analysis_config")
+    base_filters = base_config.enabled_filters if base_config is not None else {}
+    base_parameters = base_config.filter_parameters if base_config is not None else {}
+
+    col_a, col_b = st.columns(2)
+    use_name = col_a.checkbox("Name", value=bool(base_filters.get("name", True)), key="refine_filter_name")
+    use_phonetic = col_a.checkbox(
+        "Name phonetics",
+        value=bool(base_filters.get("phonetic", False)),
+        key="refine_filter_phonetic",
+    )
+    use_geographic = col_b.checkbox(
+        "Location",
+        value=bool(base_filters.get("geographic", False)),
+        key="refine_filter_geographic",
+    )
+    use_temporal = col_b.checkbox(
+        "Time",
+        value=bool(base_filters.get("temporal", False)),
+        key="refine_filter_temporal",
+    )
+
+    parameters: dict[str, float | int] = {}
+    if use_geographic:
+        geo_col_a, geo_col_b = st.columns(2)
+        parameters["geographic_distance_min_km"] = geo_col_a.number_input(
+            "Refinement distance below which similarity is maximal (km)",
+            min_value=0.0,
+            value=float(base_parameters.get("geographic_distance_min_km", 5.0)),
+            step=1.0,
+            key="refine_geographic_distance_min_km",
+        )
+        parameters["geographic_distance_max_km"] = geo_col_b.number_input(
+            "Refinement distance above which similarity is minimal (km)",
+            min_value=0.0,
+            value=float(base_parameters.get("geographic_distance_max_km", 50.0)),
+            step=5.0,
+            key="refine_geographic_distance_max_km",
+        )
+    else:
+        parameters["geographic_distance_min_km"] = float(base_parameters.get("geographic_distance_min_km", 5.0))
+        parameters["geographic_distance_max_km"] = float(base_parameters.get("geographic_distance_max_km", 50.0))
+
+    if use_temporal:
+        parameters["temporal_max_days"] = st.number_input(
+            "Refinement number of days after which similarity is zero",
+            min_value=1,
+            value=int(base_parameters.get("temporal_max_days", 365)),
+            step=30,
+            key="refine_temporal_max_days",
+        )
+    else:
+        parameters["temporal_max_days"] = int(base_parameters.get("temporal_max_days", 365))
+
+    parameters["max_results"] = st.number_input(
+        "Refinement maximum number of potential matches",
+        min_value=1,
+        value=int(base_parameters.get("max_results", max(len(result.results), 1))),
+        step=10,
+        key="refine_max_results",
+    )
+    parameters["min_score_threshold"] = float(base_parameters.get("min_score_threshold", 0.0))
+
+    return AnalysisConfig(
+        investigation_mode=result.investigation_mode,
+        analysis_mode="exhaustive",
+        selected_case_id=None,
+        enabled_filters={
+            "name": use_name,
+            "phonetic": use_phonetic,
+            "geographic": use_geographic,
+            "temporal": use_temporal,
+        },
+        filter_parameters=parameters,
+    )
 
 
 def _result_rows(result: MatchingRunResult) -> list[dict[str, object]]:
@@ -786,6 +926,8 @@ def _progress_range_for_step(step_label: str) -> tuple[int, int]:
         return 55, 90
     if "Updating cache" in step_label:
         return 90, 97
+    if "Visible pair selection" in step_label:
+        return 5, 20
     return 0, 100
 
 

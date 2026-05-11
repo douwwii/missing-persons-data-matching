@@ -44,6 +44,8 @@ def render_upload_section():
     st.session_state["loaded_clean_dataset"] = df
     st.session_state.pop("analysis_config", None)
     st.session_state.pop("analysis_results", None)
+    st.session_state.pop("analysis_history", None)
+    st.session_state.pop("analysis_history_index", None)
 
     st.success("File loaded successfully.")
     st.caption("Preview of the first case records")
