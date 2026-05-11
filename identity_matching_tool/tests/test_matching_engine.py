@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from src.matching.matching_engine import run_matching
-from src.models import AnalysisConfig, BlockingConfig, MissingPersonRecord
+from src.matching.matching_engine import run_matching, run_matching_on_pair_results
+from src.models import AnalysisConfig, BlockingConfig, MissingPersonRecord, PairMatchingResult, ParallelConfig
 
 
 def record(
@@ -103,3 +103,67 @@ def test_max_results_limits_results() -> None:
     result = run_matching(records(), config("exhaustive", max_results=2))
 
     assert len(result.results) <= 2
+
+
+def source_pair(id_a: str, id_b: str) -> PairMatchingResult:
+    record_by_id = {record.case_id: record for record in records()}
+    left = record_by_id[id_a]
+    right = record_by_id[id_b]
+    return PairMatchingResult(
+        id_A=id_a,
+        id_B=id_b,
+        name_A=left.full_name_raw,
+        name_B=right.full_name_raw,
+        score_final=0.0,
+    )
+
+
+def test_refinement_scores_only_visible_source_pairs() -> None:
+    source_results = [source_pair("A", "B"), source_pair("C", "D")]
+
+    result = run_matching_on_pair_results(
+        records(),
+        source_results,
+        config("exhaustive"),
+        ParallelConfig(enable_parallelism=False),
+    )
+
+    compared_pairs = {frozenset((pair.id_A, pair.id_B)) for pair in result.results}
+    assert result.status == "ok"
+    assert result.analysis_mode == "refinement"
+    assert result.theoretical_pairs_count == 2
+    assert result.compared_pairs_count == 2
+    assert compared_pairs <= {frozenset(("A", "B")), frozenset(("C", "D"))}
+
+
+def test_refinement_applies_sorting_and_max_results_after_recalculation() -> None:
+    source_results = [source_pair("C", "D"), source_pair("A", "B")]
+
+    result = run_matching_on_pair_results(
+        records(),
+        source_results,
+        config("exhaustive", max_results=1),
+        ParallelConfig(enable_parallelism=False),
+    )
+
+    assert len(result.results) == 1
+    assert {result.results[0].id_A, result.results[0].id_B} == {"A", "B"}
+    assert result.retained_results_count == 1
+
+
+def test_refinement_skips_pairs_with_missing_records() -> None:
+    source_results = [
+        source_pair("A", "B"),
+        PairMatchingResult("A", "Z", "juan pablo payar", "missing", 0.0),
+    ]
+
+    result = run_matching_on_pair_results(
+        records(),
+        source_results,
+        config("exhaustive"),
+        ParallelConfig(enable_parallelism=False),
+    )
+
+    assert result.theoretical_pairs_count == 2
+    assert result.compared_pairs_count == 1
+    assert all("Z" not in {pair.id_A, pair.id_B} for pair in result.results)

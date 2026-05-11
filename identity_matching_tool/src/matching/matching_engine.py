@@ -169,6 +169,82 @@ def run_standard_blocking_matching(
     )
 
 
+def run_matching_on_pair_results(
+    records: list[MissingPersonRecord],
+    source_results: list[PairMatchingResult],
+    analysis_config: AnalysisConfig,
+    parallel_config: ParallelConfig | None = None,
+    progress_callback: Callable[[str, int, int], None] | None = None,
+) -> MatchingRunResult:
+    """Rescore exactly the visible pairs from a previous result step."""
+    started_at = perf_counter()
+    records_by_id = {record.case_id: record for record in records}
+    source_pairs = _unique_valid_pair_ids(source_results, records_by_id)
+    if progress_callback is not None:
+        progress_callback("Visible pair selection", len(source_pairs), max(len(source_results), 1))
+
+    threshold = float(analysis_config.filter_parameters.get("min_score_threshold", 0.0))
+    max_results = int(analysis_config.filter_parameters.get("max_results", 50))
+    parallel_config = _effective_parallel_config(parallel_config)
+
+    scoring_started_at = perf_counter()
+    pair_results = _score_pairs(
+        records,
+        source_pairs,
+        analysis_config,
+        parallel_config,
+        use_cache=True,
+        progress_callback=progress_callback,
+    )
+    scoring_elapsed = perf_counter() - scoring_started_at
+
+    retained = [
+        pair_result
+        for pair_result in pair_results
+        if pair_result.score_final is not None and pair_result.score_final >= threshold
+    ]
+    retained.sort(key=lambda result: result.score_final or 0.0, reverse=True)
+    retained = retained[:max_results]
+    elapsed = perf_counter() - started_at
+    stats = _parallel_stats(len(source_pairs), pair_results, parallel_config, scoring_elapsed)
+
+    return MatchingRunResult(
+        status="ok",
+        analysis_mode="refinement",
+        investigation_mode=analysis_config.investigation_mode,
+        results=retained,
+        total_records=len(records),
+        theoretical_pairs_count=len(source_results),
+        compared_pairs_count=len(source_pairs),
+        retained_results_count=len(retained),
+        elapsed_time=elapsed,
+        **stats,
+        explanation=(
+            "Refinement mode: only potential matches displayed in the previous analysis step "
+            "were rescored with the selected filters."
+        ),
+    )
+
+
+def _unique_valid_pair_ids(
+    source_results: list[PairMatchingResult],
+    records_by_id: dict[str, MissingPersonRecord],
+) -> list[tuple[str, str]]:
+    """Return unique source pair IDs whose records are still available."""
+    seen: set[tuple[str, str]] = set()
+    pairs: list[tuple[str, str]] = []
+    for result in source_results:
+        if result.id_A not in records_by_id or result.id_B not in records_by_id:
+            continue
+        left, right = sorted((str(result.id_A), str(result.id_B)))
+        key = (left, right)
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append((result.id_A, result.id_B))
+    return pairs
+
+
 def _pairs_for_config(
     records: list[MissingPersonRecord],
     analysis_config: AnalysisConfig,
