@@ -1,0 +1,43 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local dependency installs
+.venv/
+venv/
+env/
+python_packages/
+identity_matching_tool/python_packages/
+python_package/
+identity_matching_tool/python_package/
+
+# Build/package artifacts
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Application-generated caches
+cache/
+identity_matching_tool/cache/
+
+# Local data created during manual runs
+identity_matching_tool/data/local/
+identity_matching_tool/data/uploads/
+identity_matching_tool/data/exports/
+
+# Streamlit local secrets/config
+.streamlit/secrets.toml
+identity_matching_tool/.streamlit/secrets.toml
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
