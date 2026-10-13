@@ -727,6 +727,15 @@ def _record_comparison_rows(
         ("longitude", record_a.longitude, record_b.longitude),
         ("disappearance_date_parsed", record_a.disappearance_date_parsed, record_b.disappearance_date_parsed),
     ]
+    if "source_case_id" in record_a.raw_data or "source_case_id" in record_b.raw_data:
+        fields.insert(
+            1,
+            (
+                "source_case_id",
+                record_a.raw_data.get("source_case_id"),
+                record_b.raw_data.get("source_case_id"),
+            ),
+        )
     return [
         {"field": field, "case_A": _display_value(value_a), "case_B": _display_value(value_b)}
         for field, value_a, value_b in fields

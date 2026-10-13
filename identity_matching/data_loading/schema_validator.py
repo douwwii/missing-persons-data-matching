@@ -24,7 +24,12 @@ def validate_clean_dataset(df: pd.DataFrame) -> DatasetValidationResult:
     elif missing_required:
         message = f"Missing required columns: {', '.join(missing_required)}."
     else:
-        message = "Case IDs must be nonempty and unique before matching."
+        issues = []
+        if missing_case_ids_count:
+            issues.append(f"{missing_case_ids_count} record(s) have an empty case_id")
+        if duplicated_case_ids_count:
+            issues.append(f"{duplicated_case_ids_count} record(s) share duplicate case_id values")
+        message = "Case IDs must be nonempty and unique before matching. " + "; ".join(issues) + "."
 
     return DatasetValidationResult(
         is_valid=is_valid,

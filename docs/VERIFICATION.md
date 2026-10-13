@@ -21,3 +21,5 @@ Python 3.14 phonetic installation failed while building `editdistance`, whose co
 This verifies startup and core processing, not every browser interaction or the accuracy of real case matching. No operational ICRC dataset, confidential document or pre-existing local workbook was used. No evaluation metric on real people has been inferred from these checks.
 
 Final publication review added a CSV round-trip regression test for quality summaries: NaN fields are counted as missing after reload. The full suites passed with Python 3.12 and 3.14; the latter skips the optional real-library phonetic test.
+
+Case-ID import correction: 153 tests passed under Python 3.12, and the 13 new case-ID tests passed under Python 3.14. Synthetic checks cover duplicate/missing IDs, preservation of 10,290 rows, collisions with existing IDs, source-reference backups, all-pairs matching after repair, literal NA/NULL identifiers, the explicit Streamlit repair button, schema failures and subsequent uploads. No real case database was opened or altered.

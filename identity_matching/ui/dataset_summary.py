@@ -22,6 +22,12 @@ def render_dataset_summary(validation: DatasetValidationResult) -> None:
     if validation.missing_case_ids_count:
         st.warning(f"{validation.missing_case_ids_count} case record(s) have a missing case_id.")
 
+    if validation.duplicated_case_ids_count:
+        st.warning(
+            f"{validation.duplicated_case_ids_count} case record(s) share duplicate case_id values. "
+            "These rows need distinct identifiers for matching."
+        )
+
     if validation.missing_recommended_columns:
         st.warning(
             "Some recommended columns are missing. The file can still be used, "
@@ -29,7 +35,4 @@ def render_dataset_summary(validation: DatasetValidationResult) -> None:
         )
 
     if not validation.is_valid:
-        st.error(
-            "The workflow is blocked. Fix the step 1 output so it includes all "
-            "required columns, then upload the file again."
-        )
+        st.error("The workflow is blocked. " + validation.message)

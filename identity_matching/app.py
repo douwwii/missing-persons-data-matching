@@ -4,6 +4,7 @@ import streamlit as st
 
 from identity_matching.data_loading.clean_file_loader import dataframe_to_records
 from identity_matching.data_loading.schema_validator import validate_clean_dataset
+from identity_matching.ui.case_id_resolution import render_case_id_resolution
 from identity_matching.ui.configuration_panel import render_configuration_panel
 from identity_matching.ui.dataset_summary import render_dataset_summary
 from identity_matching.ui.upload_section import render_upload_section
@@ -50,7 +51,7 @@ def main() -> None:
             render_dataset_summary(validation)
     else:
         render_dataset_summary(validation)
-    if not validation.is_valid:
+    if not render_case_id_resolution(df, validation):
         return
 
     st.session_state["clean_dataset"] = df
