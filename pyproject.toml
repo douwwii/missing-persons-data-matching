@@ -1,22 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "identity-db-cleaning"
-version = "0.1.0"
-description = "Etape 1: nettoyage, normalisation et enrichissement de dossiers de personnes disparues."
+name = "missing-persons-data-matching"
+version = "0.2.0"
+description = "Academic data preparation and interpretable matching of case records"
 requires-python = ">=3.10"
 dependencies = [
-    "pandas>=2.0",
-    "openpyxl>=3.1",
-    "python-dateutil>=2.8",
-    "rapidfuzz>=3.0",
-    "streamlit>=1.30",
+    "pandas>=2.2,<4",
+    "openpyxl>=3.1,<4",
+    "xlrd>=2,<3",
+    "python-dateutil>=2.8,<3",
+    "rapidfuzz>=3,<4",
+    "streamlit>=1.33,<2",
 ]
 
 [project.optional-dependencies]
-test = [
-    "pytest>=8.0",
-]
+phonetic = ["epitran>=1.26,<2", "panphon>=0.21,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.17,<0.18"]
+
+[tool.setuptools.packages.find]
+include = ["data_cleaning*", "identity_matching*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

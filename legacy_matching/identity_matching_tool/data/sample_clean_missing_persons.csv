@@ -1,5 +1,0 @@
-case_id,full_name_raw,full_name_normalized,first_name_raw,first_name_normalized,last_name_raw,last_name_normalized,name_tokens,disappearance_city_raw,disappearance_city_normalized,disappearance_city_verified,disappearance_department_verified,latitude,longitude,disappearance_date_raw,disappearance_date_parsed,city_resolution_status,city_resolution_score,city_resolution_explanation
-MP-001,Marie Dupont,marie dupont,Marie,marie,Dupont,dupont,"['marie', 'dupont']",Lyon,lyon,Lyon,Rhone,45.7640,4.8357,2024-02-18,2024-02-18,verified,0.98,Exact city match
-MP-002,Marc Dupond,marc dupond,Marc,marc,Dupond,dupond,"['marc', 'dupond']",Villeurbanne,villeurbanne,Villeurbanne,Rhone,45.7719,4.8902,2024-02-21,2024-02-21,verified,0.95,Nearby verified city
-MP-003,Anne Martin,anne martin,Anne,anne,Martin,martin,"['anne', 'martin']",Grenoble,grenoble,Grenoble,Isere,45.1885,5.7245,2023-11-05,2023-11-05,verified,0.99,Exact city match
-
