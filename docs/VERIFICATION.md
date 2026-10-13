@@ -6,8 +6,8 @@ Verification performed on Fedora on 2026-10-13:
 | --- | --- |
 | Original cleaning baseline | 18 passed |
 | Original matching baseline | Collection failed: 7 errors caused by the absent SQLite connection module |
-| Unified suite, Python 3.12.15 with phonetic dependencies | 139 passed |
-| Unified core suite, Python 3.14.8 without phonetic dependencies | 138 passed, 1 real-library phonetic test skipped |
+| Unified suite, Python 3.12.15 with phonetic dependencies | 140 passed |
+| Unified core suite, Python 3.14.8 without phonetic dependencies | 139 passed, 1 real-library phonetic test skipped |
 | Ruff 0.17.0 lint/format | Passed |
 | Package installation and dependency compatibility | Editable installation succeeded; uv reported all 56 installed packages compatible |
 | Cleaning and matching Streamlit startup | Both AppTest sessions had no exceptions |
@@ -19,3 +19,5 @@ The inherited phonetic mocks reused a global distance object across tests, maski
 Python 3.14 phonetic installation failed while building `editdistance`, whose compilation needed unavailable Python development headers. Python 3.12 used an available binary wheel and completed installation. A private standalone Python 3.12 can be used without modifying Fedora's system Python.
 
 This verifies startup and core processing, not every browser interaction or the accuracy of real case matching. No operational ICRC dataset, confidential document or pre-existing local workbook was used. No evaluation metric on real people has been inferred from these checks.
+
+Final publication review added a CSV round-trip regression test for quality summaries: NaN fields are counted as missing after reload. The full suites passed with Python 3.12 and 3.14; the latter skips the optional real-library phonetic test.

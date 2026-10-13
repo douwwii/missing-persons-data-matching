@@ -1,16 +1,11 @@
-# Publication review pending
+# Data and publication notes
 
-No GitHub creation, push, archive, deletion, visibility change or history rewrite was performed. Local preparation does not establish publication rights.
+The current demonstration CSVs were fabricated for this project and do not describe an actual investigation. Real uploads, exports, Excel workbooks, Streamlit secrets, environments and operational SQLite caches are excluded from Git. The pre-existing workbook outside the repository was not opened, copied or added during preparation.
 
-The historical-object audit covered 17 cleaning blobs and 82 matching blobs across all 11 original commits. Token/private-key/assigned-secret patterns found no matching credential. File inventory did not identify a tracked case database, Excel workbook, confidential research report or API-key file. This limited audit cannot establish confidentiality or copyright status from source text alone.
+Both original Git histories are retained. On 2026-10-13, the repository owner explicitly authorized keeping the legacy record fixtures in the public history after reviewing their names and source locations: the cleaning pipeline's human-correction test and the original matching sample CSV. This records permission to retain those examples; it does not turn heuristic scores into verified case identifications.
 
-Two legacy sources need provenance confirmation before the inherited history can be republished:
+The historical-object scan covered original and migrated source trees with GitHub/AWS token, private-key and assigned-secret patterns. No matching credential was detected. A pattern scan is limited and does not establish the absence of every possible sensitive value.
 
-1. `db_cleaning`, original `tests/test_pipeline.py`, full-name fixture in the human-correction test. Its origin is not documented. The current test uses a newly fabricated replacement, but the old value remains in inherited commits.
-2. `id_matching`, original `identity_matching_tool/data/sample_clean_missing_persons.csv`, and related record fixtures. The records look like examples, but the repository does not explicitly document that every row is fabricated or authorized. The current sample has been replaced; original history is still reachable.
+When processing real records, cache files may contain case IDs, names/IPA and blocking signatures. Keep them private, including files stored outside the default ignored directory through MATCHING_CACHE_DIR. Git ignores do not anonymize data or remove anything already committed.
 
-The pre-existing local `CICR_Missing_ppl/Base-Consolidada-pfr.xlsx` was not opened, copied, added to Git or modified. It remains outside these two repositories.
-
-The owner must confirm that historical record fixtures are synthetic or authorized for publication, and that publication of the PIR code and ICRC contextual attribution is permitted. No license has been added because these rights cannot be inferred from public accessibility. If confirmation is unavailable, a separate sanitized publication history can be prepared while retaining the original clones/bundles; that choice needs explicit authorization. No existing history has been silently rewritten.
-
-Operational caches include case IDs, names/IPA or blocking signatures when real records are processed. Keep those files private, including caches stored via MATCHING_CACHE_DIR outside the default ignored directory. Git ignores are preventive, not a data anonymization mechanism.
+The ICRC reference describes the academic research context supplied by the author. It does not imply endorsement or official deployment. No license has been added; licensing remains subject to the applicable publication rights.

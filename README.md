@@ -73,14 +73,14 @@ flowchart LR
 data_cleaning/           Preparation application and pure processing modules
 identity_matching/       Matching application, engine, scoring, UI and cache code
 examples/                Fabricated input tables, clean CSV and end-to-end demo
-docs/                    Methods, migration, publication review and historical notes
+docs/                    Verification, migration and data-publication notes
 tests/                   Original suites plus integration, IO, SQLite and UI checks
 .streamlit/config.toml   Preserved local interface theme
 pyproject.toml           Package metadata and dependency declarations
 requirements*.txt        Resolved dependencies and development tools
 ```
 
-There is one Git repository with both original histories connected by a merge commit. The code is kept in separate Python packages rather than combined into one artificial application.
+Both original histories are connected by a merge commit. The two Python packages exchange a documented CSV schema and share dependency management.
 
 ## Technologies
 
@@ -90,7 +90,7 @@ Python, pandas, Streamlit, RapidFuzz, python-dateutil, openpyxl, xlrd and SQLite
 
 Python 3.12 is recommended for the complete phonetic workflow. Core preparation/matching was also checked on Fedora's Python 3.14. The resolved files target Python 3.12; installing phonetic dependencies on Python 3.14 failed in this environment because `editdistance` needed unavailable Python development headers.
 
-From the repository directory, using an installed Python 3.12:
+For a fresh clone, create an environment with Python 3.12:
 
 ```bash
 python3.12 -m venv .venv
@@ -99,14 +99,21 @@ python -m pip install -r requirements-phonetic.txt
 python -m pip install --no-deps -e .
 ```
 
-For the core application without the optional phonetic libraries, install `requirements.txt` instead. The already prepared local environment, when provided with this migration, can be activated directly with `source .venv/bin/activate`.
+For the core application without the optional phonetic libraries, install `requirements.txt` instead. If `.venv` is already prepared, use its Python directly. `python -m pip` must refer to that environment, not Fedora's `/usr/bin/python`; otherwise the optional `editdistance` dependency may attempt a source build under Python 3.14.
 
-Launch the tools in separate terminals from the repository root:
+Run both tools at the same time in **two separate terminals**, from the repository root:
 
 ```bash
-python -m streamlit run data_cleaning/app.py --server.address 127.0.0.1 --server.port 8501
-python -m streamlit run identity_matching/app.py --server.address 127.0.0.1 --server.port 8502
+# Terminal 1: data preparation, http://127.0.0.1:8501
+.venv/bin/python -m streamlit run data_cleaning/app.py --server.address 127.0.0.1 --server.port 8501
 ```
+
+```bash
+# Terminal 2: matching, http://127.0.0.1:8502
+.venv/bin/python -m streamlit run identity_matching/app.py --server.address 127.0.0.1 --server.port 8502
+```
+
+On Windows, use `.venv\Scripts\python.exe` in place of `.venv/bin/python`. Stop each application with Ctrl+C in its own terminal.
 
 The first tool takes a persons table and a city reference table. The second takes the exported clean CSV. Start with [`examples/`](examples/README.md). No API credentials or real dataset are included. `MATCHING_CACHE_DIR` optionally selects a private cache directory; `.env.example` documents the shell setting and is not automatically loaded.
 
@@ -123,6 +130,8 @@ python -m examples.demo --phonetic
 The demo reads four invented case records and two invented locations, demonstrates an explicit human correction, writes `generated/synthetic_clean.csv`, reloads it through the actual matching loader, and compares all six pairs. Its output illustrates mechanics only; it is not an evaluation of identification accuracy. A reviewed clean fixture is also available at `examples/synthetic_clean.csv` for direct UI upload.
 
 ## Verification
+
+GitHub Actions runs the tests, Ruff lint and formatting checks on pushes and pull requests, using Python 3.12.
 
 ```bash
 python -m pip install -r requirements-dev.txt
@@ -142,7 +151,7 @@ Tests cover original cleaning/matching behavior, blocking indexes, cache reuse, 
 - Fewer calculable dimensions can inflate apparent confidence. A high score always needs contextual human review.
 - Phonetic resources and language models may be unavailable; the interface reports this and excludes unavailable scores.
 - Streamlit is a local research interface without authentication, access-control or an operational deployment design. Startup and processing were verified; every interactive browser action was not exercised.
-- This repository retains legacy history. **Publication is pending provenance and rights review** described in [`docs/PUBLICATION_REVIEW.md`](docs/PUBLICATION_REVIEW.md).
+- Original Git histories are preserved, including legacy example fixtures retained with the owner's authorization. Current demonstration files are explicitly fabricated; private uploads, exports and caches remain outside Git. See [`docs/PUBLICATION_REVIEW.md`](docs/PUBLICATION_REVIEW.md).
 
 ## Research Context & Acknowledgements
 
