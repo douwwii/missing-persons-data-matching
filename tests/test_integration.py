@@ -114,3 +114,25 @@ def test_real_phonetic_libraries_on_fabricated_names(monkeypatch):
     assert same.ipa_a
     assert different.status == "ok"
     assert 0 <= different.score_final < 1.0
+
+
+def test_quality_summary_handles_missing_values_after_csv_round_trip():
+    from data_cleaning.pipeline import quality_summary
+
+    clean = clean_synthetic_records()
+    columns = [
+        "latitude",
+        "longitude",
+        "disappearance_city_verified",
+        "human_validation_decision",
+        "disappearance_date_parsed",
+        "disappearance_date_raw",
+    ]
+    clean[columns] = ""
+    reloaded = load_clean_csv(StringIO(clean.to_csv(index=False)))
+    summary = quality_summary(reloaded)
+    assert summary["nombre de dossiers avec latitude/longitude"] == 0
+    assert summary["nombre de dossiers avec ville verifiee"] == 0
+    assert summary["nombre de dossiers corriges par un humain"] == 0
+    assert summary["nombre de dates correctement parsees"] == 0
+    assert summary["nombre de dates invalides ou absentes"] == 4

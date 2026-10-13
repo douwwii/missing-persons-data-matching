@@ -178,10 +178,15 @@ def build_clean_database(
 
 def quality_summary(clean_df: pd.DataFrame) -> dict[str, object]:
     total = len(clean_df)
-    with_coordinates = clean_df["latitude"].astype(str).str.strip().ne("") & clean_df["longitude"].astype(
-        str
-    ).str.strip().ne("")
-    city_verified = clean_df["disappearance_city_verified"].astype(str).str.strip().ne("")
+
+    def present(column: str) -> pd.Series:
+        values = clean_df[column]
+        return values.notna() & values.astype(str).str.strip().ne("")
+
+    latitude = pd.to_numeric(clean_df["latitude"], errors="coerce")
+    longitude = pd.to_numeric(clean_df["longitude"], errors="coerce")
+    with_coordinates = latitude.between(-90, 90) & longitude.between(-180, 180)
+    city_verified = present("disappearance_city_verified")
     missing_city = clean_df["city_resolution_status"].eq("missing_city")
     unresolved = clean_df["city_resolution_status"].isin(
         [
@@ -192,9 +197,9 @@ def quality_summary(clean_df: pd.DataFrame) -> dict[str, object]:
             "city_match_department_mismatch",
         ]
     )
-    human = clean_df["human_validation_decision"].astype(str).str.strip().ne("")
-    parsed_dates = clean_df["disappearance_date_parsed"].astype(str).str.strip().ne("")
-    date_raw_present = clean_df["disappearance_date_raw"].astype(str).str.strip().ne("")
+    human = present("human_validation_decision")
+    parsed_dates = present("disappearance_date_parsed")
+    date_raw_present = present("disappearance_date_raw")
     invalid_or_absent_dates = ~parsed_dates
 
     def pct(mask: pd.Series) -> float:
